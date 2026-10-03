@@ -1,5 +1,6 @@
-SELECT * FROM bills
-WHERE user_id = $1
-  AND status IN ('pending', 'overdue')
-  AND due_date <= CURRENT_DATE + ($2 || ' days')::interval
-ORDER BY due_date ASC
+SELECT b.*, a.currency FROM bills b
+LEFT JOIN accounts a ON a.id = b.account_id
+WHERE b.user_id = $1
+  AND b.status IN ('pending', 'overdue')
+  AND b.due_date <= CURRENT_DATE + ($2 || ' days')::interval
+ORDER BY b.due_date ASC

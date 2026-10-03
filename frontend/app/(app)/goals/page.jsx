@@ -187,7 +187,7 @@ export default function GoalsPage() {
                 <div className="h-2 bg-emerald-500" style={{ width: `${Math.min(100, goal.progressPercentage)}%` }} />
               </div>
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                {formatCurrency(goal.saved_amount)} of {formatCurrency(goal.target_amount)} ({goal.progressPercentage}%)
+                {formatCurrency(goal.saved_amount, goal.currency)} of {formatCurrency(goal.target_amount, goal.currency)} ({goal.progressPercentage}%)
               </p>
               <div className="mt-3 flex gap-2">
                 <input

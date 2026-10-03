@@ -2,6 +2,7 @@
 const { query, withTransaction } = require('../db/pool')
 const { loadSql } = require('../db/loadSql')
 const { badRequest, assertOwned } = require('../shared/utils')
+const accountsService = require('./accounts')
 
 const SQL = {
   create: loadSql('savingsGoals/create'),
@@ -59,12 +60,16 @@ const deleteGoal = async (userId, id) => {
   await query(SQL.delete, [goal.id])
 }
 
+// A goal's amounts are in its linked account's currency; a goal with no
+// linked account falls back to the user's display currency.
 const listGoals = async (userId) => {
   const result = await query(SQL.list, [userId])
+  const displayCurrency = await accountsService.getDisplayCurrency(userId)
   return result.rows.map((goal) => {
     const progressPercentage = Math.round((Number(goal.saved_amount) / Number(goal.target_amount)) * 1000) / 10
     return {
       ...goal,
+      currency: goal.currency || displayCurrency,
       progressPercentage,
       isComplete: Number(goal.saved_amount) >= Number(goal.target_amount)
     }

@@ -9,8 +9,8 @@ import { formatCurrency, formatNumber, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
 import HealthGauge from '@/components/HealthGauge'
 import CardHeader from '@/components/CardHeader'
+import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
-const ALLOCATION_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
 // Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
 // classes — these CSS variables (defined in globals.css) are the dark-mode
@@ -27,6 +27,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState(null)
   const [trends, setTrends] = useState(null)
   const [allocation, setAllocation] = useState(null)
+  const chartTheme = useChartTheme()
   const [upcomingBills, setUpcomingBills] = useState(null)
   const [billsTotal, setBillsTotal] = useState(null)
   const [goals, setGoals] = useState(null)
@@ -69,7 +70,7 @@ export default function DashboardPage() {
   async function handlePayBill(bill) {
     setPayError('')
     const confirmed = window.confirm(
-      `Mark "${bill.name}" as paid?\n\nThis will record a ${formatCurrency(bill.amount, summary?.displayCurrency)} expense and deduct it from the linked account. This can't be undone from here.`
+      `Mark "${bill.name}" as paid?\n\nThis will record a ${formatCurrency(bill.amount, bill.currency || summary?.displayCurrency)} expense and deduct it from the linked account. This can't be undone from here.`
     )
     if (!confirmed) return
     try {
@@ -109,6 +110,7 @@ export default function DashboardPage() {
   const currency = summary?.displayCurrency || 'IDR'
   const periodLabel = summary?.periodLabel || ''
   const changes = summary?.changes
+  const allocationSlices = allocation ? withDistinctColors(allocation.allocation, { nameKey: 'type', theme: chartTheme }) : []
 
   return (
     <div className="space-y-6">
@@ -274,7 +276,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{formatCurrency(bill.amount, currency)}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{formatCurrency(bill.amount, bill.currency || currency)}</span>
                     <button
                       onClick={() => handlePayBill(bill)}
                       className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
@@ -319,7 +321,7 @@ export default function DashboardPage() {
                     />
                   </div>
                   <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                    {formatCurrency(goal.saved_amount, currency)} / {formatCurrency(goal.target_amount, currency)}
+                    {formatCurrency(goal.saved_amount, goal.currency)} / {formatCurrency(goal.target_amount, goal.currency)}
                   </p>
                 </li>
               ))}
@@ -342,7 +344,7 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={allocation.allocation}
+                      data={allocationSlices}
                       dataKey="amount"
                       nameKey="type"
                       innerRadius={28}
@@ -350,8 +352,8 @@ export default function DashboardPage() {
                       paddingAngle={3}
                       cornerRadius={3}
                     >
-                      {allocation.allocation.map((entry, index) => (
-                        <Cell key={entry.type} fill={ALLOCATION_COLORS[index % ALLOCATION_COLORS.length]} stroke="none" />
+                      {allocationSlices.map((entry) => (
+                        <Cell key={entry.type} fill={entry.color} stroke="none" />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
@@ -359,10 +361,10 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               </div>
               <ul className="min-w-0 flex-1 space-y-1.5">
-                {allocation.allocation.map((entry, index) => (
+                {allocationSlices.map((entry) => (
                   <li key={entry.type} className="flex items-center justify-between gap-2 text-xs">
                     <span className="flex min-w-0 items-center gap-1.5 truncate text-gray-600 dark:text-gray-400">
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: ALLOCATION_COLORS[index % ALLOCATION_COLORS.length] }} />
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
                       <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
                     </span>
                     <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
