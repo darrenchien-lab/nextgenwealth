@@ -36,43 +36,45 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sticky top-0 flex h-screen w-60 flex-shrink-0 flex-col justify-between overflow-y-auto bg-slate-900">
-      <div>
-        <div className="flex items-center gap-2 px-5 py-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white">
-            <LineChart className="h-4 w-4" />
+    <aside className="w-60 flex-shrink-0 bg-slate-900">
+      <div className="sticky top-0 flex h-screen flex-col justify-between overflow-y-auto">
+        <div>
+          <div className="flex items-center gap-2 px-5 py-6">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white">
+              <LineChart className="h-4 w-4" />
+            </div>
+            <span className="text-lg font-semibold text-white">NextGen Wealth</span>
           </div>
-          <span className="text-lg font-semibold text-white">NextGen Wealth</span>
+          <nav className="flex flex-col gap-1 px-3">
+            {NAV_ITEMS.map((item) => {
+              const active = pathname === item.href
+              const Icon = item.icon
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    active
+                      ? 'bg-emerald-500/15 text-emerald-400'
+                      : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <Icon size={18} strokeWidth={2} />
+                  {item.label}
+                </Link>
+              )
+            })}
+          </nav>
         </div>
-        <nav className="flex flex-col gap-1 px-3">
-          {NAV_ITEMS.map((item) => {
-            const active = pathname === item.href
-            const Icon = item.icon
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-emerald-500/15 text-emerald-400'
-                    : 'text-slate-400 hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                <Icon size={18} strokeWidth={2} />
-                {item.label}
-              </Link>
-            )
-          })}
-        </nav>
-      </div>
-      <div className="border-t border-white/10 p-3">
-        <button
-          onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-white"
-        >
-          <LogOut size={18} strokeWidth={2} />
-          Log out
-        </button>
+        <div className="border-t border-white/10 p-3">
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-white"
+          >
+            <LogOut size={18} strokeWidth={2} />
+            Log out
+          </button>
+        </div>
       </div>
     </aside>
   )

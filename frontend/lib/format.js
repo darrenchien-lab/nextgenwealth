@@ -22,6 +22,14 @@ export function formatNumber(amount) {
   return new Intl.NumberFormat('id-ID').format(amount)
 }
 
+// Asset quantities are stored with 8 decimal places; trailing zeros are
+// dropped (1200.00000000 → 1.200) but up to 8 digits are kept, so a small
+// crypto amount like 0.00012345 BTC isn't rounded away.
+export function formatQuantity(quantity) {
+  if (quantity === null || quantity === undefined) return '-'
+  return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 8 }).format(Number(quantity))
+}
+
 export function formatPercent(value) {
   if (value === null || value === undefined) return '-'
   return `${value}%`

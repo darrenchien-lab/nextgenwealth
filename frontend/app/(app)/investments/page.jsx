@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts'
 import { Pencil, X, Plus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History } from 'lucide-react'
 import { request } from '@/lib/apiClient'
-import { formatCurrency, formatNumber } from '@/lib/format'
+import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, formatAxisDate } from '@/lib/chartRanges'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -570,13 +570,13 @@ export default function InvestmentsPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 dark:bg-gray-900/40 text-left text-xs uppercase text-gray-500 dark:text-gray-400">
                     <tr>
-                      <th className="px-5 py-3">Asset</th>
-                      <th className="px-5 py-3">Qty</th>
-                      <th className="px-5 py-3">Last Price</th>
-                      <th className="px-5 py-3">Cost Basis</th>
-                      <th className="px-5 py-3">Value</th>
-                      <th className="px-5 py-3">Return</th>
-                      <th className="px-5 py-3"></th>
+                      <th className="px-4 py-3">Asset</th>
+                      <th className="px-4 py-3">Qty</th>
+                      <th className="px-4 py-3">Last Price</th>
+                      <th className="px-4 py-3">Cost Basis</th>
+                      <th className="px-4 py-3">Value</th>
+                      <th className="px-4 py-3">Return</th>
+                      <th className="px-4 py-3"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -584,21 +584,21 @@ export default function InvestmentsPage() {
                       const TypeIcon = ASSET_TYPE_ICONS[h.asset_type] || Wallet
                       return (
                         <tr key={h.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/60">
-                          <td className="px-5 py-3">
+                          <td className="px-4 py-3">
                             <span className="inline-flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100">
                               <TypeIcon size={14} className="shrink-0 text-gray-400 dark:text-gray-500" />
                               {h.asset_name}
                               <span className="text-xs font-normal text-gray-400 dark:text-gray-500">({ASSET_TYPE_LABELS[h.asset_type] || h.asset_type})</span>
                             </span>
                           </td>
-                          <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{h.quantity}</td>
-                          <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.current_price, h.currency)}</td>
-                          <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.cost_basis_total, h.currency)}</td>
-                          <td className="px-5 py-3 text-gray-900 dark:text-gray-100">{formatCurrency(h.currentValue, portfolio.displayCurrency)}</td>
-                          <td className={`px-5 py-3 font-medium ${h.returnPercentage === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentage >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatQuantity(h.quantity)}</td>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.current_price, h.currency)}</td>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.cost_basis_total, h.currency)}</td>
+                          <td className="px-4 py-3 text-gray-900 dark:text-gray-100">{formatCurrency(h.currentValue, portfolio.displayCurrency)}</td>
+                          <td className={`px-4 py-3 font-medium ${h.returnPercentage === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentage >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                             {h.returnPercentage === null ? 'N/A' : `${h.returnPercentage >= 0 ? '+' : ''}${h.returnPercentage}%`}
                           </td>
-                          <td className="px-5 py-3 text-right">
+                          <td className="px-4 py-3 text-right">
                             <button onClick={() => openEdit(h)} title="Edit holding" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300">
                               <Pencil size={17} />
                             </button>
@@ -633,7 +633,7 @@ export default function InvestmentsPage() {
                           <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                             {isBuy ? 'Buy' : 'Sell'} {t.asset_name}
                           </p>
-                          <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(t.occurred_at).toLocaleDateString()} · {t.quantity} unit</p>
+                          <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(t.occurred_at).toLocaleDateString()} · {formatQuantity(t.quantity)} unit</p>
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
@@ -667,7 +667,7 @@ export default function InvestmentsPage() {
             <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl bg-gray-50 dark:bg-gray-900/40 p-3 text-sm">
               <div>
                 <p className="text-xs uppercase text-gray-400 dark:text-gray-500">Qty</p>
-                <p className="font-medium text-gray-900 dark:text-gray-100">{editingHolding.quantity}</p>
+                <p className="font-medium text-gray-900 dark:text-gray-100">{formatQuantity(editingHolding.quantity)}</p>
               </div>
               <div>
                 <p className="text-xs uppercase text-gray-400 dark:text-gray-500">Value</p>

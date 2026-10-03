@@ -5,8 +5,37 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, L
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, formatAxisDate } from '@/lib/chartRanges'
+import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
+const PIE_OUTER_RADIUS = 80
+const PIE_LABEL_RADIUS = PIE_OUTER_RADIUS + 20 // recharts places labels 20px outside the pie
+const PIE_LABEL_LINE_HEIGHT = 18
+
+// Which pie slices get an outside label. A label is dropped only when it
+// would overlap one already placed on the same side of the pie (biggest
+// slices are placed first), so a small slice still gets its label whenever
+// there's room for it. Dropped slices remain in the legend and tooltip.
+// Mirrors recharts' layout: slices run counter-clockwise from 3 o'clock, and
+// each label sits at its slice's mid-angle, anchored left or right of center.
+function pickLabeledSlices(rows) {
+  const total = rows.reduce((sum, r) => sum + Number(r.amount), 0)
+  if (!(total > 0)) return new Set()
+
+  let start = 0
+  const slices = rows.map((r, index) => {
+    const share = Number(r.amount) / total
+    const midAngle = (start + share / 2) * 2 * Math.PI
+    start += share
+    return { index, share, y: -PIE_LABEL_RADIUS * Math.sin(midAngle), rightSide: Math.cos(midAngle) >= 0 }
+  })
+
+  const placed = []
+  for (const slice of [...slices].sort((a, b) => b.share - a.share)) {
+    const collides = placed.some((p) => p.rightSide === slice.rightSide && Math.abs(p.y - slice.y) < PIE_LABEL_LINE_HEIGHT)
+    if (!collides) placed.push(slice)
+  }
+  return new Set(placed.map((s) => s.index))
+}
 
 // Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
 // classes — these CSS variables (defined in globals.css) are the dark-mode
@@ -82,6 +111,7 @@ function SummaryChangeCard({ label, value }) {
 
 export default function ReportsPage() {
   const [breakdown, setBreakdown] = useState(null)
+  const chartTheme = useChartTheme()
   const [trends, setTrends] = useState(null)
   const [netWorthHistory, setNetWorthHistory] = useState(null)
   const [targetAllocation, setTargetAllocation] = useState(null)
@@ -141,6 +171,9 @@ export default function ReportsPage() {
 
   if (loading) return <p className="text-sm text-gray-500 dark:text-gray-400">Loading reports...</p>
 
+  const expenseSlices = breakdown ? withDistinctColors(breakdown.breakdown, { nameKey: 'categoryName', theme: chartTheme }) : []
+  const labeledSlices = pickLabeledSlices(expenseSlices)
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -165,10 +198,19 @@ export default function ReportsPage() {
           </h2>
           {breakdown && breakdown.breakdown.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie data={breakdown.breakdown} dataKey="amount" nameKey="categoryName" outerRadius={90} label={(d) => `${d.categoryName} (${d.percentage}%)`}>
-                  {breakdown.breakdown.map((entry, index) => (
-                    <Cell key={entry.categoryId ?? index} fill={COLORS[index % COLORS.length]} />
+              <PieChart margin={{ top: 20 }}>
+                <Pie
+                  data={expenseSlices}
+                  dataKey="amount"
+                  nameKey="categoryName"
+                  outerRadius={PIE_OUTER_RADIUS}
+                  label={(d) => (labeledSlices.has(d.index) ? `${d.categoryName} (${d.percentage}%)` : null)}
+                  labelLine={(d) => (labeledSlices.has(d.index)
+                    ? <path d={`M${d.points[0].x},${d.points[0].y}L${d.points[1].x},${d.points[1].y}`} stroke={d.stroke} fill="none" />
+                    : <g />)}
+                >
+                  {expenseSlices.map((entry, index) => (
+                    <Cell key={entry.categoryId ?? index} fill={entry.color} />
                   ))}
                 </Pie>
                 <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, breakdown.displayCurrency)} />
