@@ -1,0 +1,37 @@
+# Secrets & environment files (never commit)
+.env
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies & build output
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+
+# Database dumps / exports that may hold real financial data
+*.sql.gz
+*.dump
+*.backup
+*.sqlite
+*.db
+*.csv
+*.xlsx
+
+# Logs & OS / editor junk
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local tooling (Claude Code, OpenSpec)
+.claude/
+openspec/
