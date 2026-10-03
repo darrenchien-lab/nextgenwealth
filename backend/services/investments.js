@@ -376,7 +376,6 @@ const setAllocationTargets = async (userId, targets, targetCagr) => {
 // not spaces between words, which are part of the name — e.g. "RDPU Bibit")
 // so accidental stray spaces from typing don't silently break a match.
 const normalizeAssetName = (name) => name.trim().toUpperCase()
-const LIABILITY_TYPES = new Set(['credit_card'])
 
 const getAllocationComparison = async (userId) => {
   const targetsResult = await query(SQL.listAllocationTargets, [userId])
@@ -393,9 +392,8 @@ const getAllocationComparison = async (userId) => {
   for (const account of accounts) {
     const { amount, available } = await currencyService.convertAmount(Number(account.balance), account.currency, portfolio.displayCurrency)
     if (!available) continue
-    const signedAmount = LIABILITY_TYPES.has(account.type) ? -amount : amount
     const key = normalizeAssetName(account.type)
-    valueByAssetName.set(key, (valueByAssetName.get(key) || 0) + signedAmount)
+    valueByAssetName.set(key, (valueByAssetName.get(key) || 0) + amount)
   }
 
   // Percentages are computed against total net worth (accounts + investments),

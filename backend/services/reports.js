@@ -156,8 +156,6 @@ const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId }) =
 
 const getTrends = async (userId, months) => aggregates.getMonthlyTrend(userId, months)
 
-const LIABILITY_TYPES = new Set(['credit_card'])
-
 // Groups active accounts by type, plus investment holdings broken out by
 // their allocation category (falling back to asset name when a holding has
 // no category), matching the granularity used by the Target Allocation
@@ -174,8 +172,7 @@ const getAssetAllocation = async (userId) => {
   for (const account of accounts) {
     const { amount, available } = await currencyService.convertAmount(Number(account.balance), account.currency, displayCurrency)
     if (!available) { hasUnconverted = true; continue }
-    const signedAmount = LIABILITY_TYPES.has(account.type) ? -amount : amount
-    totalsByType.set(account.type, (totalsByType.get(account.type) || 0) + signedAmount)
+    totalsByType.set(account.type, (totalsByType.get(account.type) || 0) + amount)
   }
 
   const portfolio = await investmentsService.getPortfolio(userId)

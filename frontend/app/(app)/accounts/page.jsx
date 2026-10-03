@@ -373,6 +373,11 @@ export default function AccountsPage() {
               onChange={(e) => setForm({ ...form, balance: e.target.value })}
               className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
             />
+            {form.type === 'credit_card' && (
+              <p className="col-span-full text-xs text-gray-500 dark:text-gray-400">
+                Enter what you currently owe as a negative number (e.g. -500000). Spending on the card makes it more negative; paying it off with a transfer brings it back toward 0.
+              </p>
+            )}
             {formError && <p className="col-span-full text-sm text-red-600 dark:text-red-400">{formError}</p>}
             <button type="submit" className="col-span-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-[1.02] hover:bg-emerald-700 hover:shadow-md">
               Create

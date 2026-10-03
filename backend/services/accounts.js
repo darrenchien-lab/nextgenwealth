@@ -6,7 +6,6 @@ const { isValidCurrencyCode } = require('../shared/currencyCodes')
 const currencyService = require('./currency')
 
 const ACCOUNT_TYPES = ['bank', 'e_wallet', 'cash', 'credit_card']
-const LIABILITY_TYPES = new Set(['credit_card'])
 
 const SQL = {
   createAccount: loadSql('accounts/createAccount'),
@@ -193,7 +192,10 @@ const getNetWorth = async (userId) => {
       allConverted = false
       continue
     }
-    netWorth += LIABILITY_TYPES.has(account.type) ? -amount : amount
+    // A credit card's balance goes negative as it's spent on (every ledger
+    // entry treats it like any other account), so it's already signed as a
+    // liability and is summed as-is.
+    netWorth += amount
   }
 
   const investments = await getInvestmentsTotal(userId, displayCurrency)
