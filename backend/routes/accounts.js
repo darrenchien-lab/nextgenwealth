@@ -40,6 +40,14 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ success: true, accounts })
 }))
 
+router.get('/:id/statement', asyncHandler(async (req, res) => {
+  const statement = await accountsService.getStatement(req.userId, Number(req.params.id), {
+    startDate: req.query.startDate,
+    endDate: req.query.endDate
+  })
+  res.json({ success: true, ...statement })
+}))
+
 router.get('/net-worth', asyncHandler(async (req, res) => {
   const netWorth = await accountsService.getNetWorth(req.userId)
   res.json({ success: true, ...netWorth })

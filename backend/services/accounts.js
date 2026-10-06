@@ -27,7 +27,8 @@ const SQL = {
   getOpenInvestmentHoldings: loadSql('accounts/getOpenInvestmentHoldings'),
   getLedgerDeltaForAccount: loadSql('accounts/getLedgerDeltaForAccount'),
   logBalanceAdjustment: loadSql('accounts/logBalanceAdjustment'),
-  getLatestBalanceAdjustment: loadSql('accounts/getLatestBalanceAdjustment')
+  getLatestBalanceAdjustment: loadSql('accounts/getLatestBalanceAdjustment'),
+  listStatementEntries: loadSql('accounts/listStatementEntries')
 }
 
 const createAccount = async (userId, { name, type, currency, balance }) => {
@@ -243,8 +244,79 @@ const reconcileBalances = async (userId) => {
   return { checked: accounts.length, mismatches }
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+const roundCents = (value) => Math.round(value * 100) / 100
+
+// An account's statement ("mutasi"): every movement that changed its
+// balance, oldest first, each with the balance right after it — optionally
+// limited to a date range (inclusive, 'YYYY-MM-DD').
+//
+// The running balance is walked *backwards* from the stored balance, so the
+// latest line always ends on the balance the rest of the app shows. Walking
+// all the way back should land exactly on the opening balance the account
+// was created with; `consistent` reports whether it does, so drift (a
+// balance change that skipped the ledger) is surfaced rather than hidden.
+const getStatement = async (userId, accountId, { startDate, endDate } = {}) => {
+  for (const [name, value] of [['startDate', startDate], ['endDate', endDate]]) {
+    if (value && !DATE_ONLY.test(value)) throw badRequest(`${name} must be in YYYY-MM-DD format`)
+  }
+  if (startDate && endDate && startDate > endDate) throw badRequest('startDate must not be after endDate')
+
+  const account = await getAccountById(userId, accountId)
+  const result = await query(SQL.listStatementEntries, [account.id])
+
+  let balance = Number(account.balance)
+  const entries = new Array(result.rows.length)
+  for (let i = result.rows.length - 1; i >= 0; i--) {
+    const row = result.rows[i]
+    const amount = Number(row.amount)
+    entries[i] = {
+      source: row.source,
+      id: row.id,
+      occurredAt: row.occurred_at,
+      amount,
+      balanceAfter: roundCents(balance),
+      description: row.description,
+      categoryName: row.category_name,
+      counterparty: row.counterparty,
+      quantity: row.quantity === null ? null : Number(row.quantity),
+      isReversal: row.is_reversal
+    }
+    balance -= amount
+  }
+  const balanceBeforeHistory = roundCents(balance)
+
+  const rangeStart = startDate ? new Date(`${startDate}T00:00:00`) : null
+  const rangeEnd = endDate ? new Date(`${endDate}T23:59:59.999`) : null
+  const lastBalanceBefore = (date) => {
+    let found = balanceBeforeHistory
+    for (const e of entries) {
+      if (e.occurredAt >= date) break
+      found = e.balanceAfter
+    }
+    return found
+  }
+
+  const inRange = entries.filter((e) => (!rangeStart || e.occurredAt >= rangeStart) && (!rangeEnd || e.occurredAt <= rangeEnd))
+  const openingBalance = rangeStart ? lastBalanceBefore(rangeStart) : balanceBeforeHistory
+  const closingBalance = rangeEnd ? lastBalanceBefore(new Date(rangeEnd.getTime() + 1)) : roundCents(Number(account.balance))
+
+  return {
+    account: { id: account.id, name: account.name, type: account.type, currency: account.currency, balance: Number(account.balance), isArchived: account.is_archived },
+    startDate: startDate || null,
+    endDate: endDate || null,
+    openingBalance,
+    closingBalance,
+    totalIn: roundCents(inRange.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0)),
+    totalOut: roundCents(inRange.filter((e) => e.amount < 0).reduce((sum, e) => sum - e.amount, 0)),
+    entries: inRange,
+    consistent: Math.abs(balanceBeforeHistory - Number(account.initial_balance)) < 0.005
+  }
+}
+
 module.exports = {
   ACCOUNT_TYPES,
+  getStatement,
   createAccount,
   getAccountById,
   listAccounts,

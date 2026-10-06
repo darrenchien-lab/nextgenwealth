@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import CardHeader from '@/components/CardHeader'
@@ -428,7 +429,9 @@ export default function AccountsPage() {
                   const TypeIcon = ACCOUNT_TYPE_ICONS[account.type] || Wallet
                   return (
                     <tr key={account.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/60">
-                      <td className="px-5 py-3 font-medium text-gray-900 dark:text-gray-100">{account.name}</td>
+                      <td className="px-5 py-3 font-medium text-gray-900 dark:text-gray-100">
+                        <Link href={`/accounts/${account.id}`} title="View statement" className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{account.name}</Link>
+                      </td>
                       <td className="px-5 py-3">
                         <span className="inline-flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
                           <TypeIcon size={14} />
