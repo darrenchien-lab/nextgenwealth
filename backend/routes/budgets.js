@@ -12,8 +12,9 @@ router.post('/', asyncHandler(async (req, res) => {
 }))
 
 router.get('/', asyncHandler(async (req, res) => {
-  const budgets = await budgetsService.listBudgetsWithUsage(req.userId, req.query.period)
-  res.json({ success: true, budgets })
+  const { period, periodLabel } = await budgetsService.describePeriod(req.userId, req.query.period)
+  const budgets = await budgetsService.listBudgetsWithUsage(req.userId, period)
+  res.json({ success: true, period, periodLabel, budgets })
 }))
 
 router.get('/:id/forecast', asyncHandler(async (req, res) => {

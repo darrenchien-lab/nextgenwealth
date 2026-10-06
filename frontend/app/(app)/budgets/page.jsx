@@ -6,11 +6,6 @@ import { formatCurrency } from '@/lib/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Pencil, Trash2, X } from 'lucide-react'
 
-function currentPeriod() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
-
 // Plain-language stand-ins for the backend's literal validation wording,
 // same reasoning as the other pages' client-side validation.
 function validateBudgetForm(f) {
@@ -28,7 +23,11 @@ export default function BudgetsPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ categoryId: '', period: currentPeriod(), limitAmount: '', currency: 'IDR' })
+  // The current budget cycle comes from the server, which knows the user's
+  // cycle start day — with a cutoff like the 10th, "now" can still belong to
+  // last month's cycle, so the calendar month alone would be wrong.
+  const [cycle, setCycle] = useState({ period: '', periodLabel: '' })
+  const [form, setForm] = useState({ categoryId: '', period: '', limitAmount: '', currency: 'IDR' })
   const [formError, setFormError] = useState('')
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
@@ -46,17 +45,18 @@ export default function BudgetsPage() {
     try {
       const [categoriesData, budgetsData, currencyData, supportedData] = await Promise.all([
         request('/categories'),
-        request(`/budgets?period=${currentPeriod()}`),
+        request('/budgets'),
         request('/accounts/display-currency'),
         request('/accounts/supported-currencies')
       ])
       setCategories(categoriesData.categories)
       setBudgets(budgetsData.budgets)
+      setCycle({ period: budgetsData.period, periodLabel: budgetsData.periodLabel })
       setCurrencies(supportedData.currencies)
       // Just a sensible starting point for the create form — the user can
       // still pick any other currency from the dropdown, independent of
       // this setting.
-      setForm((f) => ({ ...f, currency: currencyData.displayCurrency }))
+      setForm((f) => ({ ...f, period: f.period || budgetsData.period, currency: currencyData.displayCurrency }))
     } catch (err) {
       setLoadError(err.message || 'Failed to load budgets')
     } finally {
@@ -86,7 +86,7 @@ export default function BudgetsPage() {
           currency: form.currency.toUpperCase()
         })
       })
-      setForm((f) => ({ categoryId: '', period: currentPeriod(), limitAmount: '', currency: f.currency }))
+      setForm((f) => ({ categoryId: '', period: cycle.period, limitAmount: '', currency: f.currency }))
       setShowForm(false)
       loadAll()
     } catch (err) {
@@ -157,7 +157,10 @@ export default function BudgetsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Budgets</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Budgets</h1>
+          {cycle.periodLabel && <p className="text-sm text-gray-500 dark:text-gray-400">Current cycle: {cycle.periodLabel}</p>}
+        </div>
         <button onClick={() => setShowForm((v) => !v)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md">
           {showForm ? 'Cancel' : '+ New Budget'}
         </button>

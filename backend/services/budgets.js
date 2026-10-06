@@ -88,6 +88,16 @@ const deleteBudget = async (userId, id) => {
   await query(SQL.delete, [budget.id])
 }
 
+// Which cycle a budget list is for, plus a readable label for it. Clients
+// can't work this out from the calendar alone, since it depends on the
+// user's cycle start day.
+const describePeriod = async (userId, period) => {
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const key = period || periods.periodKeyForDate(cycleStartDay, new Date())
+  const { start, end } = periods.periodKeyToBounds(cycleStartDay, key)
+  return { period: key, periodLabel: periods.formatPeriodLabel(start, end, cycleStartDay) }
+}
+
 const listBudgetsWithUsage = async (userId, period) => {
   const effectivePeriod = period || (await currentPeriod(userId))
   const result = await query(SQL.listByPeriod, [userId, effectivePeriod])
@@ -126,4 +136,4 @@ const getForecast = async (userId, budgetId) => {
   return { available: true, forecast: Math.round(average * 100) / 100 }
 }
 
-module.exports = { createBudget, getBudgetById, updateBudget, deleteBudget, listBudgetsWithUsage, getForecast }
+module.exports = { createBudget, getBudgetById, updateBudget, deleteBudget, describePeriod, listBudgetsWithUsage, getForecast }
