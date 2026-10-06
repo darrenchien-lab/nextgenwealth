@@ -692,7 +692,7 @@ export default function InvestmentsPage() {
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Rename</label>
                 <div className="flex gap-2">
                   <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <button onClick={handleSaveName} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900">Save</button>
+                  <button onClick={handleSaveName} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
 
@@ -700,7 +700,7 @@ export default function InvestmentsPage() {
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Current Price</label>
                 <div className="flex gap-2">
                   <input type="number" value={editForm.price} onChange={(e) => setEditForm({ ...editForm, price: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <button onClick={handleSavePrice} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900">Save</button>
+                  <button onClick={handleSavePrice} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
 
@@ -715,7 +715,7 @@ export default function InvestmentsPage() {
                     onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                     className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
                   />
-                  <button onClick={handleSaveCategory} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900">Save</button>
+                  <button onClick={handleSaveCategory} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
 
@@ -723,7 +723,7 @@ export default function InvestmentsPage() {
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400" title="Used to compute portfolio CAGR">Purchase Date</label>
                 <div className="flex gap-2">
                   <input type="date" value={editForm.purchasedAt} onChange={(e) => setEditForm({ ...editForm, purchasedAt: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <button onClick={handleSavePurchasedAt} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900">Save</button>
+                  <button onClick={handleSavePurchasedAt} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
 

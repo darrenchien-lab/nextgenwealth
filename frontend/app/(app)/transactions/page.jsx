@@ -518,7 +518,7 @@ export default function TransactionsPage() {
               <option value="">All types</option>
               {TYPES.map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
             </select>
-            <button onClick={loadTransactions} className="whitespace-nowrap rounded-lg bg-gray-800 px-3 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 hover:shadow-md">
+            <button onClick={() => loadTransactions()} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md">
               Filter
             </button>
           </div>
