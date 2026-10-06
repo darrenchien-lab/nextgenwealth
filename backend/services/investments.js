@@ -48,11 +48,25 @@ const SQL = {
 // inside the same withTransaction block as the holding/balance change it
 // documents, so a buy or sell can never exist without its log entry (or
 // vice versa). realizedGain is only meaningful for a 'sell'.
-const logInvestmentTransaction = (client, { userId, holdingId, assetName, category, type, quantity, pricePerUnit, totalAmount, currency, realizedGain, accountId }) => (
+const logInvestmentTransaction = (client, { userId, holdingId, assetName, category, type, quantity, pricePerUnit, totalAmount, currency, realizedGain, accountId, occurredAt }) => (
   client.query(SQL.logTransaction, [
-    userId, holdingId, assetName, category || null, type, quantity, pricePerUnit, totalAmount, currency, realizedGain ?? null, accountId || null
+    userId, holdingId, assetName, category || null, type, quantity, pricePerUnit, totalAmount, currency, realizedGain ?? null, accountId || null, occurredAt || null
   ])
 )
+
+// A buy/sell can be logged for the day it actually happened rather than the
+// day it was entered. A date-only value ('YYYY-MM-DD') is stored at midday;
+// today's date (or none at all) keeps the current time, so entries made
+// today stay in the order they were entered.
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+const resolveTradeTime = (date) => {
+  if (date === undefined || date === null || date === '') return null
+  if (!DATE_ONLY.test(date)) throw badRequest('date must be in YYYY-MM-DD format')
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  if (date > today) throw badRequest('date cannot be in the future')
+  return date === today ? null : `${date}T12:00:00`
+}
 
 // accountId is optional — when given, the purchase (quantity × costBasis,
 // which the caller should already have folded any brokerage/exchange fee
@@ -64,6 +78,7 @@ const logInvestmentTransaction = (client, { userId, holdingId, assetName, catego
 // auto-converting: the deducted amount must be the exact real amount that
 // left that account, not a rate-dependent estimate.
 const addHolding = async (userId, { assetName, assetType, quantity, currency, costBasis, category, purchasedAt, accountId }) => {
+  const tradeTime = resolveTradeTime(purchasedAt)
   if (typeof assetName !== 'string' || assetName.trim() === '') throw badRequest('assetName is required')
   if (typeof assetType !== 'string' || assetType.trim() === '') throw badRequest('assetType is required')
   const numericQuantity = Number(quantity)
@@ -96,7 +111,7 @@ const addHolding = async (userId, { assetName, assetType, quantity, currency, co
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: trimmedCategory, type: 'buy',
       quantity: numericQuantity, pricePerUnit: numericCostBasis, totalAmount: totalSpent, currency: currency.toUpperCase(),
-      accountId: account?.id
+      accountId: account?.id, occurredAt: tradeTime
     })
     return holding
   })
@@ -214,7 +229,8 @@ const setPurchasedAt = async (userId, id, purchasedAt) => {
 // accountId is optional, same deal as addHolding — deducts this top-up's
 // spend from a linked account (must match the holding's currency) in the
 // same transaction as the quantity/cost-basis update.
-const addToHolding = async (userId, id, { quantity, costBasis, accountId }) => {
+const addToHolding = async (userId, id, { quantity, costBasis, accountId, date }) => {
+  const tradeTime = resolveTradeTime(date)
   const numericQuantity = Number(quantity)
   if (!(numericQuantity > 0)) throw badRequest('quantity must be a positive number')
   if (costBasis !== undefined && costBasis !== null && costBasis !== '' && Number(costBasis) < 0) {
@@ -243,7 +259,7 @@ const addToHolding = async (userId, id, { quantity, costBasis, accountId }) => {
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: holding.category, type: 'buy',
       quantity: numericQuantity, pricePerUnit: numericCostBasis, totalAmount: totalSpent, currency: holding.currency,
-      accountId: account?.id
+      accountId: account?.id, occurredAt: tradeTime
     })
     return result.rows[0]
   })
@@ -251,7 +267,8 @@ const addToHolding = async (userId, id, { quantity, costBasis, accountId }) => {
   return updated
 }
 
-const removeHolding = async (userId, id, quantity) => {
+const removeHolding = async (userId, id, quantity, date) => {
+  const tradeTime = resolveTradeTime(date)
   const numericQuantity = Number(quantity)
   if (!(numericQuantity > 0)) throw badRequest('quantity must be a positive number')
   const holding = await getHoldingById(userId, id)
@@ -273,7 +290,7 @@ const removeHolding = async (userId, id, quantity) => {
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: holding.category, type: 'sell',
       quantity: numericQuantity, pricePerUnit: salePricePerUnit, totalAmount: saleProceeds, currency: holding.currency,
-      realizedGain: Math.round(realizedGain * 100) / 100
+      realizedGain: Math.round(realizedGain * 100) / 100, occurredAt: tradeTime
     })
     return result.rows[0]
   })

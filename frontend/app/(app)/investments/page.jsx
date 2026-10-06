@@ -43,6 +43,12 @@ const ASSET_TYPES = ['stock', 'mutual_fund', 'crypto', 'etf', 'bond', 'gold', 'p
 const ASSET_TYPE_LABELS = { stock: 'Stock', mutual_fund: 'Mutual Fund', crypto: 'Crypto', etf: 'ETF', bond: 'Bond', gold: 'Gold', property: 'Property', other: 'Other' }
 const ASSET_TYPE_ICONS = { stock: TrendingUp, mutual_fund: PieChart, crypto: Bitcoin, etf: Package, bond: Landmark, gold: Coins, property: Building2, other: Wallet }
 
+// Local date parts, not toISOString() (UTC), so the default is the user's today.
+function todayInputValue() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const emptyForm = () => ({ assetName: '', assetType: '', quantity: '', currency: '', costBasis: '', purchasedAt: '', accountId: '', category: '' })
 
 // Plain-language stand-ins for the backend's literal validation wording,
@@ -74,7 +80,7 @@ export default function InvestmentsPage() {
   const [formError, setFormError] = useState('')
 
   const [editingHoldingId, setEditingHoldingId] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', price: '', purchasedAt: '', addQty: '', addTotalSpent: '', addAccountId: '', removeQty: '' })
+  const [editForm, setEditForm] = useState({ name: '', price: '', purchasedAt: '', addQty: '', addTotalSpent: '', addAccountId: '', addDate: '', removeQty: '', removeDate: '' })
   const [editError, setEditError] = useState('')
   const [confirmingRemove, setConfirmingRemove] = useState(false)
 
@@ -215,7 +221,9 @@ export default function InvestmentsPage() {
       addQty: '',
       addTotalSpent: '',
       addAccountId: '',
-      removeQty: ''
+      addDate: todayInputValue(),
+      removeQty: '',
+      removeDate: todayInputValue()
     })
   }
 
@@ -297,10 +305,11 @@ export default function InvestmentsPage() {
         body: JSON.stringify({
           quantity: Number(editForm.addQty),
           costBasis: costBasisPerUnit,
-          accountId: editForm.addAccountId ? Number(editForm.addAccountId) : undefined
+          accountId: editForm.addAccountId ? Number(editForm.addAccountId) : undefined,
+          date: editForm.addDate || undefined
         })
       })
-      setEditForm({ ...editForm, addQty: '', addTotalSpent: '', addAccountId: '' })
+      setEditForm({ ...editForm, addQty: '', addTotalSpent: '', addAccountId: '', addDate: todayInputValue() })
       await refreshEdit()
     } catch (err) {
       setEditError(err.message || 'Failed to add to holding')
@@ -311,8 +320,8 @@ export default function InvestmentsPage() {
     setConfirmingRemove(false)
     setEditError('')
     try {
-      await request(`/investments/${editingHoldingId}/remove`, { method: 'POST', body: JSON.stringify({ quantity: Number(editForm.removeQty || 0) }) })
-      setEditForm({ ...editForm, removeQty: '' })
+      await request(`/investments/${editingHoldingId}/remove`, { method: 'POST', body: JSON.stringify({ quantity: Number(editForm.removeQty || 0), date: editForm.removeDate || undefined }) })
+      setEditForm({ ...editForm, removeQty: '', removeDate: todayInputValue() })
       await refreshEdit()
     } catch (err) {
       setEditError(err.message || 'Failed to remove holding')
@@ -720,7 +729,7 @@ export default function InvestmentsPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400" title="Used to compute portfolio CAGR">Purchase Date</label>
+                <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400" title="Used to compute portfolio CAGR">First Purchase Date</label>
                 <div className="flex gap-2">
                   <input type="date" value={editForm.purchasedAt} onChange={(e) => setEditForm({ ...editForm, purchasedAt: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <button onClick={handleSavePurchasedAt} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
@@ -741,17 +750,20 @@ export default function InvestmentsPage() {
                   />
                   <button onClick={handleAddToHolding} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700">Add</button>
                 </div>
-                <select
-                  value={editForm.addAccountId}
-                  onChange={(e) => setEditForm({ ...editForm, addAccountId: e.target.value })}
-                  title="Optional — deducts the total spent from this account's balance automatically"
-                  className="mt-2 w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
-                >
-                  <option value="">Pay from account (optional)</option>
-                  {accounts.filter((a) => !a.is_archived && a.currency === editingHolding.currency).map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <div className="mt-2 flex gap-2">
+                  <input type="date" title="Date of this purchase" value={editForm.addDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, addDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <select
+                    value={editForm.addAccountId}
+                    onChange={(e) => setEditForm({ ...editForm, addAccountId: e.target.value })}
+                    title="Optional — deducts the total spent from this account's balance automatically"
+                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
+                  >
+                    <option value="">Pay from account (optional)</option>
+                    {accounts.filter((a) => !a.is_archived && a.currency === editingHolding.currency).map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
                 {editForm.addQty > 0 && editForm.addTotalSpent > 0 && (
                   <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                     ≈ {formatCurrency(Number(editForm.addTotalSpent) / Number(editForm.addQty), editingHolding.currency)} per unit
@@ -763,6 +775,7 @@ export default function InvestmentsPage() {
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Remove Quantity (e.g. on sale)</label>
                 <div className="flex gap-2">
                   <input type="number" placeholder="Qty" value={editForm.removeQty} onChange={(e) => setEditForm({ ...editForm, removeQty: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <input type="date" title="Date of this sale" value={editForm.removeDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, removeDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <button onClick={handleRemoveClick} className="rounded-lg bg-red-500 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-red-600">Remove</button>
                 </div>
               </div>

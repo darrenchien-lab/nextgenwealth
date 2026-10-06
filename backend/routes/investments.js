@@ -57,7 +57,7 @@ router.post('/:id/add', asyncHandler(async (req, res) => {
 }))
 
 router.post('/:id/remove', asyncHandler(async (req, res) => {
-  const holding = await investmentsService.removeHolding(req.userId, Number(req.params.id), req.body?.quantity)
+  const holding = await investmentsService.removeHolding(req.userId, Number(req.params.id), req.body?.quantity, req.body?.date)
   res.json({ success: true, holding })
 }))
 
