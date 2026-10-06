@@ -33,7 +33,15 @@ export async function request(path, options = {}) {
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
+  } catch {
+    // fetch only rejects when no response arrived at all — almost always the
+    // backend not running (yet), which the browser reports as a bare
+    // "Failed to fetch". Say what's actually wrong instead.
+    throw new ApiError(`Can't reach the server at ${API_BASE_URL}. Make sure the backend is running, then refresh the page.`, 0, 'NETWORK_ERROR')
+  }
 
   if (response.status === 401) {
     clearToken()
