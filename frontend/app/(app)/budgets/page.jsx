@@ -74,13 +74,25 @@ export default function BudgetsPage() {
   async function handleCreate(e) {
     e.preventDefault()
     setFormError('')
-    const validationError = validateBudgetForm(form)
+    // A name typed in the new-category box counts as the chosen category.
+    const pendingCategory = showCategoryForm ? newCategoryName.trim() : ''
+    const validationError = validateBudgetForm(pendingCategory ? { ...form, categoryId: 'new' } : form)
     if (validationError) { setFormError(validationError); return }
+    let categoryId = form.categoryId
+    if (pendingCategory) {
+      setCategoryError('')
+      try {
+        categoryId = String((await addCategory(pendingCategory)).id)
+      } catch (err) {
+        setCategoryError(err.message || 'Failed to create category')
+        return
+      }
+    }
     try {
       await request('/budgets', {
         method: 'POST',
         body: JSON.stringify({
-          categoryId: Number(form.categoryId),
+          categoryId: Number(categoryId),
           period: form.period,
           limitAmount: Number(form.limitAmount),
           currency: form.currency.toUpperCase()
@@ -94,15 +106,24 @@ export default function BudgetsPage() {
     }
   }
 
+  // Creates a category, adds it to the dropdown and selects it — shared by
+  // the inline "Add" button and the main form's submit, so a name typed in
+  // the new-category box is saved even if "Add" was never clicked.
+  async function addCategory(name) {
+    const data = await request('/categories', { method: 'POST', body: JSON.stringify({ name }) })
+    setCategories((prev) => [...prev, data.category].sort((a, b) => a.name.localeCompare(b.name)))
+    setForm((f) => ({ ...f, categoryId: String(data.category.id) }))
+    setNewCategoryName('')
+    setShowCategoryForm(false)
+    return data.category
+  }
+
   async function handleCreateCategory(e) {
     e.preventDefault()
     setCategoryError('')
+    if (!newCategoryName.trim()) { setCategoryError('Please enter a category name.'); return }
     try {
-      const data = await request('/categories', { method: 'POST', body: JSON.stringify({ name: newCategoryName }) })
-      setCategories((prev) => [...prev, data.category].sort((a, b) => a.name.localeCompare(b.name)))
-      setForm((f) => ({ ...f, categoryId: String(data.category.id) }))
-      setNewCategoryName('')
-      setShowCategoryForm(false)
+      await addCategory(newCategoryName.trim())
     } catch (err) {
       setCategoryError(err.message || 'Failed to create category')
     }
@@ -197,6 +218,7 @@ export default function BudgetsPage() {
               <input
                 autoFocus
                 placeholder="New category name"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory(e) }}
                 value={newCategoryName}
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
