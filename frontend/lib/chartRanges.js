@@ -89,3 +89,59 @@ export function formatAxisDate(value) {
   const [, month, day] = value.split('-')
   return `${Number(day)}/${Number(month)}`
 }
+
+// Line charts plot on a real time axis: each point sits at its date, so a
+// month between two snapshots takes a month's width instead of the same
+// width as the step between two consecutive days (which made a slow climb
+// over six weeks look like a one-day jump). 'YYYY-MM' (monthly) points are
+// placed on the 1st of that month.
+const dateKeyToTime = (key) => {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year, month - 1, day || 1).getTime()
+}
+
+export function withTimestamps(rows) {
+  return rows.map((row) => ({ ...row, ts: dateKeyToTime(row.date) }))
+}
+
+// Up to `max` ticks spread evenly over the time span, each snapped to the
+// nearest real data point — labels are always actual snapshot dates, and stay
+// evenly spaced even when the series mixes monthly and daily points.
+export function timeAxisTicks(rows, max = 10) {
+  const times = rows.map((row) => row.ts)
+  if (times.length <= max) return times
+  const first = times[0]
+  const last = times[times.length - 1]
+  const picked = new Set()
+  for (let i = 0; i < max; i++) {
+    const target = first + ((last - first) * i) / (max - 1)
+    let nearest = times[0]
+    for (const t of times) if (Math.abs(t - target) < Math.abs(nearest - target)) nearest = t
+    picked.add(nearest)
+  }
+  return [...picked].sort((a, b) => a - b)
+}
+
+// Formats a tick or tooltip timestamp the same way the date string itself
+// would be (day/month for daily points, "Okt '26" for monthly ones).
+export function timeAxisFormatter(rows) {
+  const byTime = new Map(rows.map((row) => [row.ts, row.date]))
+  return (ts) => {
+    const key = byTime.get(ts)
+    if (key) return formatAxisDate(key)
+    const d = new Date(ts)
+    return `${d.getDate()}/${d.getMonth() + 1}`
+  }
+}
+
+// Full date for tooltips ("12 Sep 2026", or "Sep 2026" for a monthly point).
+export function timeTooltipFormatter(rows) {
+  const byTime = new Map(rows.map((row) => [row.ts, row.date]))
+  return (ts) => {
+    const key = byTime.get(ts) || ''
+    const d = new Date(ts)
+    return key.length === 7
+      ? d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      : d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+  }
+}
