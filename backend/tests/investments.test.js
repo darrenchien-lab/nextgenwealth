@@ -38,3 +38,71 @@ test('investments: a top-up and a sale are logged on the date given, and future 
   const future = await as.post(`/investments/${holding.id}/add`).send({ quantity: 1, costBasis: 1000, date: '2999-01-01' })
   assert.equal(future.status, 400)
 })
+
+test('investments: a new holding can be entered by the total paid, fees included', async () => {
+  const { as } = await createTestUser()
+  const account = (await as.post('/accounts').send({ name: 'Broker', type: 'bank', currency: 'TWD', balance: 100000 })).body.account
+
+  const res = await as.post('/investments').send({
+    assetName: '0050', assetType: 'etf', quantity: 233, currency: 'TWD', totalSpent: 27003, accountId: account.id
+  })
+  assert.equal(res.status, 201)
+  assert.equal(Number(res.body.holding.cost_basis_total), 27003)
+  assert.ok(Math.abs(Number(res.body.holding.current_price) - 27003 / 233) < 0.0001)
+
+  const accounts = (await as.get('/accounts')).body.accounts
+  assert.equal(Number(accounts.find((a) => a.id === account.id).balance), 100000 - 27003)
+
+  // With the market price given, the cost basis keeps the fee but the last price doesn't.
+  const withPrice = await as.post('/investments').send({
+    assetName: '0056', assetType: 'etf', quantity: 233, currency: 'TWD', totalSpent: 27003, price: 115.85
+  })
+  assert.equal(Number(withPrice.body.holding.cost_basis_total), 27003)
+  assert.equal(Number(withPrice.body.holding.current_price), 115.85)
+
+  const negative = await as.post('/investments').send({ assetName: 'X', assetType: 'etf', quantity: 1, currency: 'TWD', totalSpent: -1 })
+  assert.equal(negative.status, 400)
+})
+
+test('investments: adding to a holding by total paid keeps the fee in cost and leaves the last price alone', async () => {
+  const { as } = await createTestUser()
+  const account = (await as.post('/accounts').send({ name: 'Broker', type: 'bank', currency: 'TWD', balance: 100000 })).body.account
+  const holding = (await as.post('/investments').send({ assetName: '0050', assetType: 'etf', quantity: 100, currency: 'TWD', totalSpent: 11000, price: 110 })).body.holding
+
+  const withoutPrice = await as.post(`/investments/${holding.id}/add`).send({ quantity: 10, totalSpent: 1205, accountId: account.id })
+  assert.equal(Number(withoutPrice.body.holding.cost_basis_total), 12205)
+  assert.equal(Number(withoutPrice.body.holding.current_price), 110)
+
+  const withPrice = await as.post(`/investments/${holding.id}/add`).send({ quantity: 10, totalSpent: 1255, price: 125, accountId: account.id })
+  assert.equal(Number(withPrice.body.holding.quantity), 120)
+  assert.equal(Number(withPrice.body.holding.cost_basis_total), 13460)
+  // The last price is only set when the holding is created; a later purchase price does not replace it.
+  assert.equal(Number(withPrice.body.holding.current_price), 110)
+
+  const accounts = (await as.get('/accounts')).body.accounts
+  assert.equal(Number(accounts.find((a) => a.id === account.id).balance), 100000 - 1205 - 1255)
+})
+
+test('investments: fees are tracked per purchase, shrink with sales, and the detail shows cost basis with and without them', async () => {
+  const { as } = await createTestUser()
+  const holding = (await as.post('/investments').send({ assetName: 'FEE', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 1001500, price: 10000 })).body.holding
+  assert.equal(Number(holding.fees_total), 1500)
+
+  await as.post(`/investments/${holding.id}/add`).send({ quantity: 100, totalSpent: 1101650, price: 11000 })
+  await as.post(`/investments/${holding.id}/add`).send({ quantity: 100, totalSpent: 1200000 }) // no price: fee unknown
+
+  let detail = (await as.get(`/investments/${holding.id}/detail`)).body.holding
+  assert.equal(detail.quantity, 300)
+  assert.equal(detail.costBasis, 3303150)
+  assert.equal(detail.feesTotal, 3150)
+  assert.equal(detail.costBasisExcludingFees, 3300000)
+  assert.deepEqual(detail.transactions.map((t) => t.fee).sort(), [1500, 1650, null].sort())
+
+  // Selling a third of the units takes a third of the fees with it.
+  await as.post(`/investments/${holding.id}/remove`).send({ quantity: 100 })
+  detail = (await as.get(`/investments/${holding.id}/detail`)).body.holding
+  assert.equal(detail.quantity, 200)
+  assert.equal(detail.feesTotal, 2100)
+  assert.equal(detail.costBasis, 2202100)
+  assert.equal(detail.costBasisExcludingFees, 2200000)
+})

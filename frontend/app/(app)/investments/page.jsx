@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
+import Link from 'next/link'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts'
 import { Pencil, X, Plus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
-import { CHART_RANGES, applyChartRange, formatAxisDate } from '@/lib/chartRanges'
+import { CHART_RANGES, applyChartRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
+import TrendAreaChart from '@/components/TrendAreaChart'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
@@ -49,7 +51,50 @@ function todayInputValue() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-const emptyForm = () => ({ assetName: '', assetType: '', quantity: '', currency: '', costBasis: '', purchasedAt: '', accountId: '', category: '' })
+const emptyForm = () => ({ assetName: '', assetType: '', quantity: '', currency: '', totalSpent: '', price: '', purchasedAt: '', accountId: '', category: '' })
+
+// A purchase is entered as quantity × price per unit, plus — optionally —
+// the total actually paid. Whatever the total adds on top of quantity ×
+// price is the fee; leaving the total empty means there was no fee.
+// Shared by Add Holding and Add Quantity so both work out fees the same way.
+function purchaseBreakdown(quantity, price, totalPaid) {
+  const qty = Number(quantity)
+  const unitPrice = Number(price)
+  if (!(qty > 0) || price === '' || !(unitPrice >= 0)) return null
+  const gross = qty * unitPrice
+  if (totalPaid === '' || totalPaid === undefined) return { gross, total: Math.round(gross * 100) / 100, fee: 0 }
+  const total = Number(totalPaid)
+  if (Number.isNaN(total)) return null
+  return { gross, total, fee: total - gross, tooLow: total < gross - 0.01 }
+}
+
+function purchaseError(quantity, price, totalPaid) {
+  if (!quantity || !(Number(quantity) > 0)) return 'Please enter a valid quantity.'
+  if (price === '' || !(Number(price) >= 0)) return 'Please enter the price per unit.'
+  const breakdown = purchaseBreakdown(quantity, price, totalPaid)
+  if (!breakdown) return 'Please enter a valid total paid.'
+  if (breakdown.tooLow) return 'Total paid can\'t be less than quantity × price — check the numbers.'
+  return null
+}
+
+// One line spelling out how the total is made up, so a missing or mistyped
+// fee is visible before saving.
+function PurchaseSummary({ quantity, price, totalPaid, currency, accountName, className }) {
+  const b = purchaseBreakdown(quantity, price, totalPaid)
+  if (!b) return null
+  const money = (value) => formatCurrency(value, currency || undefined)
+  return (
+    <p className={className}>
+      {formatQuantity(quantity)} × {money(Number(price))} = {money(b.gross)}
+      {b.tooLow
+        ? <span className="text-red-600 dark:text-red-400"> — total paid is less than this</span>
+        : b.fee > 0.005
+          ? <> + fee {money(b.fee)} = <span className="font-semibold text-gray-900 dark:text-gray-100">{money(b.total)}</span></>
+          : <> <span className="text-gray-400 dark:text-gray-500">(no fee)</span></>}
+      {accountName && !b.tooLow && <> — deducted from {accountName}</>}
+    </p>
+  )
+}
 
 // Plain-language stand-ins for the backend's literal validation wording,
 // caught here before the request goes out (same reasoning as other pages).
@@ -58,8 +103,7 @@ function validateHoldingForm(f) {
   if (!f.assetType) return 'Please choose an asset type.'
   if (!f.quantity || !(Number(f.quantity) > 0)) return 'Please enter a valid quantity.'
   if (!f.currency) return 'Please choose a currency.'
-  if (f.costBasis === '' || Number(f.costBasis) < 0 || Number.isNaN(Number(f.costBasis))) return 'Please enter a valid cost basis.'
-  return null
+  return purchaseError(f.quantity, f.price, f.totalSpent)
 }
 
 export default function InvestmentsPage() {
@@ -80,17 +124,35 @@ export default function InvestmentsPage() {
   const [formError, setFormError] = useState('')
 
   const [editingHoldingId, setEditingHoldingId] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', price: '', purchasedAt: '', addQty: '', addTotalSpent: '', addAccountId: '', addDate: '', removeQty: '', removeDate: '' })
+  // Same idea as the Accounts page's Transfers card: Transaction History is
+  // capped to the Holdings card's live-measured height so it never makes the
+  // row taller than the holdings list — older entries scroll inside it, and
+  // "View all" opens the full list.
+  const holdingsCardRef = useRef(null)
+  const [holdingsCardHeight, setHoldingsCardHeight] = useState(null)
+  const [showAllTransactions, setShowAllTransactions] = useState(false)
+
+  useEffect(() => {
+    const el = holdingsCardRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => setHoldingsCardHeight(el.offsetHeight))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [portfolio])
+
+  const [editForm, setEditForm] = useState({ name: '', price: '', purchasedAt: '', addQty: '', addTotalSpent: '', addPrice: '', addAccountId: '', addDate: '', removeQty: '', removeDate: '' })
   const [editError, setEditError] = useState('')
   const [confirmingRemove, setConfirmingRemove] = useState(false)
 
-  const filteredHistory = useMemo(() => (
-    applyChartRange(history, historyRange)
-  ), [history, historyRange])
+  const filteredHistory = useMemo(() => {
+    const rows = applyChartRange(history, historyRange)
+    return rows ? withTimestamps(rows) : rows
+  }, [history, historyRange])
 
-  const filteredHoldingsHistory = useMemo(() => (
-    applyChartRange(holdingsHistory?.data, holdingsRange)
-  ), [holdingsHistory, holdingsRange])
+  const filteredHoldingsHistory = useMemo(() => {
+    const rows = applyChartRange(holdingsHistory?.data, holdingsRange)
+    return rows ? withTimestamps(rows) : rows
+  }, [holdingsHistory, holdingsRange])
 
   async function loadPortfolio() {
     setLoading(true)
@@ -185,7 +247,8 @@ export default function InvestmentsPage() {
           assetType: form.assetType,
           quantity: Number(form.quantity),
           currency: form.currency,
-          costBasis: Number(form.costBasis),
+          totalSpent: purchaseBreakdown(form.quantity, form.price, form.totalSpent).total,
+          price: Number(form.price),
           category: form.category.trim() || undefined,
           purchasedAt: form.purchasedAt || undefined,
           accountId: form.accountId ? Number(form.accountId) : undefined
@@ -215,11 +278,12 @@ export default function InvestmentsPage() {
     setEditError('')
     setEditForm({
       name: holding.asset_name,
-      price: String(holding.current_price),
+      price: Number(holding.current_price).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 8 }),
       category: holding.category || '',
       purchasedAt: holding.purchased_at ? holding.purchased_at.slice(0, 10) : '',
       addQty: '',
       addTotalSpent: '',
+      addPrice: '',
       addAccountId: '',
       addDate: todayInputValue(),
       removeQty: '',
@@ -287,29 +351,23 @@ export default function InvestmentsPage() {
 
   async function handleAddToHolding() {
     setEditError('')
-    if (!editForm.addQty || !(Number(editForm.addQty) > 0)) {
-      setEditError('Please enter how much you received.')
-      return
-    }
-    if (editForm.addTotalSpent === '' || Number(editForm.addTotalSpent) < 0 || Number.isNaN(Number(editForm.addTotalSpent))) {
-      setEditError('Please enter how much you spent in total.')
+    const addError = purchaseError(editForm.addQty, editForm.addPrice, editForm.addTotalSpent)
+    if (addError) {
+      setEditError(addError)
       return
     }
     try {
-      // The backend stores cost basis per unit, but a DCA/top-up receipt
-      // shows "received" and "total spent" — not a per-unit price you'd
-      // have to compute by hand — so that division happens here instead.
-      const costBasisPerUnit = Number(editForm.addTotalSpent) / Number(editForm.addQty)
       await request(`/investments/${editingHoldingId}/add`, {
         method: 'POST',
         body: JSON.stringify({
           quantity: Number(editForm.addQty),
-          costBasis: costBasisPerUnit,
+          totalSpent: purchaseBreakdown(editForm.addQty, editForm.addPrice, editForm.addTotalSpent).total,
+          price: Number(editForm.addPrice),
           accountId: editForm.addAccountId ? Number(editForm.addAccountId) : undefined,
           date: editForm.addDate || undefined
         })
       })
-      setEditForm({ ...editForm, addQty: '', addTotalSpent: '', addAccountId: '', addDate: todayInputValue() })
+      setEditForm({ ...editForm, addQty: '', addTotalSpent: '', addPrice: '', addAccountId: '', addDate: todayInputValue() })
       await refreshEdit()
     } catch (err) {
       setEditError(err.message || 'Failed to add to holding')
@@ -367,7 +425,7 @@ export default function InvestmentsPage() {
               <option value="">Asset Type</option>
               {ASSET_TYPES.map((t) => <option key={t} value={t}>{ASSET_TYPE_LABELS[t]}</option>)}
             </select>
-            <input type="number" placeholder="Quantity" required value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm" />
+            <input type="number" step="any" placeholder="Quantity" required value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm" />
             <select required value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value, accountId: '' })} className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm">
               <option value="">Currency</option>
               {currencies.length === 0
@@ -376,11 +434,23 @@ export default function InvestmentsPage() {
             </select>
             <input
               type="number"
-              placeholder="Cost basis/unit"
+              step="any"
+              min="0"
+              placeholder={`Price per unit${form.currency ? ` (${form.currency})` : ''}`}
               required
-              value={form.costBasis}
-              onChange={(e) => setForm({ ...form, costBasis: e.target.value })}
-              title="Cost basis per unit, including any brokerage/exchange fees"
+              value={form.price}
+              onChange={(e) => setForm({ ...form, price: e.target.value })}
+              title="The price per unit on your trade confirmation, before fees"
+              className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
+            />
+            <input
+              type="number"
+              step="any"
+              min="0"
+              placeholder={`Total incl. fee (opt.)${form.currency ? ` (${form.currency})` : ''}`}
+              value={form.totalSpent}
+              onChange={(e) => setForm({ ...form, totalSpent: e.target.value })}
+              title="What actually left your account, fees included. Leave empty if there was no fee."
               className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
             />
             <input
@@ -404,11 +474,19 @@ export default function InvestmentsPage() {
               title="Optional — deducts the total cost from this account's balance automatically"
               className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
             >
-              <option value="">Pay from account (optional)</option>
+              <option value="">Pay from account (opt.)</option>
               {accounts.filter((a) => !a.is_archived && a.currency === form.currency).map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
+            <PurchaseSummary
+              quantity={form.quantity}
+              price={form.price}
+              totalPaid={form.totalSpent}
+              currency={form.currency}
+              accountName={form.accountId ? accounts.find((a) => a.id === Number(form.accountId))?.name : null}
+              className="col-span-full text-sm text-gray-600 dark:text-gray-400"
+            />
             {formError && <p className="col-span-full text-sm text-red-600 dark:text-red-400">{formError}</p>}
             <button type="submit" className="col-span-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-[1.02] hover:bg-emerald-700 hover:shadow-md">
               Add
@@ -465,20 +543,14 @@ export default function InvestmentsPage() {
               // Brush (Recharts' built-in zoom/pan slider) replaces the old
               // drag-to-scroll wrapper — drag its handles to zoom into a
               // range instead of needing extra width and a manual scrollbar.
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={filteredHistory} margin={{ top: 10, right: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                  <XAxis dataKey="date" fontSize={12} tickFormatter={formatAxisDate} />
-                  <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
-                  <Tooltip
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                    formatter={(value, name) => [formatCurrency(value, portfolio.displayCurrency), name]}
-                  />
-                  <Line type="monotone" dataKey="totalValue" stroke="#2563eb" name="Value" strokeWidth={2} dot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="totalCostBasis" stroke="#94a3b8" name="Cost Basis" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
-                  <Brush dataKey="date" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={formatAxisDate} travellerWidth={10} />
-                </LineChart>
-              </ResponsiveContainer>
+              <TrendAreaChart
+                data={filteredHistory}
+                dataKey="totalValue"
+                name="Value"
+                secondary={{ dataKey: 'totalCostBasis', name: 'Cost basis' }}
+                formatValue={(value) => formatCurrency(value, portfolio.displayCurrency)}
+                formatAxisValue={formatNumber}
+              />
             ) : (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
                 <TrendingUp size={24} className="text-gray-300 dark:text-gray-600" />
@@ -532,10 +604,11 @@ export default function InvestmentsPage() {
                 <ResponsiveContainer width="100%" height={340}>
                   <LineChart data={filteredHoldingsHistory} margin={{ top: 10, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                    <XAxis dataKey="date" fontSize={12} tickFormatter={formatAxisDate} />
+                    <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} ticks={timeAxisTicks(filteredHoldingsHistory)} tickFormatter={timeAxisFormatter(filteredHoldingsHistory)} fontSize={12} />
                     <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
                     <Tooltip
                       contentStyle={CHART_TOOLTIP_STYLE}
+                      labelFormatter={timeTooltipFormatter(filteredHoldingsHistory)}
                       formatter={(value, name) => [formatCurrency(value, holdingsHistory.displayCurrency), name]}
                     />
                     {holdingsHistory.series
@@ -548,11 +621,12 @@ export default function InvestmentsPage() {
                           name={s.name}
                           stroke={getHoldingColor(s.name, holdingsHistory.series.findIndex((x) => x.key === s.key))}
                           strokeWidth={2}
-                          dot={{ r: 3 }}
+                          dot={false}
+                          activeDot={{ r: 4 }}
                           connectNulls
                         />
                       ))}
-                    <Brush dataKey="date" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={formatAxisDate} travellerWidth={10} />
+                    <Brush dataKey="ts" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={timeAxisFormatter(filteredHoldingsHistory)} travellerWidth={10} />
                   </LineChart>
                 </ResponsiveContainer>
               </>
@@ -566,8 +640,8 @@ export default function InvestmentsPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
+          <div ref={holdingsCardRef} className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
             <CardHeader icon={PieChart} color="violet" title="Holdings" />
             {portfolio.holdings.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
@@ -582,7 +656,6 @@ export default function InvestmentsPage() {
                       <th className="px-4 py-3">Asset</th>
                       <th className="px-4 py-3">Qty</th>
                       <th className="px-4 py-3">Last Price</th>
-                      <th className="px-4 py-3">Cost Basis</th>
                       <th className="px-4 py-3">Value</th>
                       <th className="px-4 py-3">Return</th>
                       <th className="px-4 py-3"></th>
@@ -596,16 +669,21 @@ export default function InvestmentsPage() {
                           <td className="px-4 py-3">
                             <span className="inline-flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100">
                               <TypeIcon size={14} className="shrink-0 text-gray-400 dark:text-gray-500" />
-                              {h.asset_name}
+                              <Link href={`/investments/${h.id}`} title="View details" className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{h.asset_name}</Link>
                               <span className="text-xs font-normal text-gray-400 dark:text-gray-500">({ASSET_TYPE_LABELS[h.asset_type] || h.asset_type})</span>
                             </span>
                           </td>
                           <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatQuantity(h.quantity)}</td>
                           <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.current_price, h.currency)}</td>
-                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.cost_basis_total, h.currency)}</td>
-                          <td className="px-4 py-3 text-gray-900 dark:text-gray-100">{formatCurrency(h.currentValue, portfolio.displayCurrency)}</td>
-                          <td className={`px-4 py-3 font-medium ${h.returnPercentage === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentage >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                            {h.returnPercentage === null ? 'N/A' : `${h.returnPercentage >= 0 ? '+' : ''}${h.returnPercentage}%`}
+                          <td className="px-4 py-3 text-gray-900 dark:text-gray-100">
+                            {formatCurrency(Number(h.quantity) * Number(h.current_price), h.currency)}
+                            {/* The portfolio totals above are in the display currency, so show what this adds to them. */}
+                            {h.currency !== portfolio.displayCurrency && h.currentValue !== null && (
+                              <span className="block text-xs text-gray-400 dark:text-gray-500">≈ {formatCurrency(h.currentValue, portfolio.displayCurrency)}</span>
+                            )}
+                          </td>
+                          <td title="Return without fees, like your broker app shows — open the holding for the return after fees" className={`px-4 py-3 font-medium ${h.returnPercentageExcludingFees === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentageExcludingFees >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {h.returnPercentageExcludingFees === null ? 'N/A' : `${h.returnPercentageExcludingFees >= 0 ? '+' : ''}${h.returnPercentageExcludingFees}%`}
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button onClick={() => openEdit(h)} title="Edit holding" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300">
@@ -621,15 +699,28 @@ export default function InvestmentsPage() {
             )}
           </div>
 
-          <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-            <CardHeader icon={History} color="violet" title="Transaction History" subtitle="Price updates aren't logged here" />
+          <div
+            className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700"
+            style={holdingsCardHeight ? { maxHeight: holdingsCardHeight } : undefined}
+          >
+            <CardHeader
+              icon={History}
+              color="violet"
+              title="Transaction History"
+              subtitle="Price updates aren't logged here"
+              action={transactions.length > 0 && (
+                <button onClick={() => setShowAllTransactions(true)} className="text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline">
+                  View all
+                </button>
+              )}
+            />
             {transactions.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-8 text-center">
                 <History size={24} className="text-gray-300 dark:text-gray-600" />
                 <p className="text-sm text-gray-400 dark:text-gray-500">No buy/sell transactions yet.</p>
               </div>
             ) : (
-              <ul className="space-y-3">
+              <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {transactions.map((t) => {
                   const isBuy = t.type === 'buy'
                   return (
@@ -663,9 +754,55 @@ export default function InvestmentsPage() {
         </>
       )}
 
+      {showAllTransactions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowAllTransactions(false)}>
+          <div className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex shrink-0 items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">All Transactions ({transactions.length})</h3>
+              <button onClick={() => setShowAllTransactions(false)} className="text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:text-gray-600 dark:hover:text-gray-300">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50 dark:bg-gray-900 text-left text-xs uppercase text-gray-500 dark:text-gray-400">
+                  <tr>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Asset</th>
+                    <th className="px-4 py-3">Type</th>
+                    <th className="px-4 py-3 text-right">Qty</th>
+                    <th className="px-4 py-3 text-right">Price</th>
+                    <th className="px-4 py-3 text-right">Fee</th>
+                    <th className="px-4 py-3 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((t) => {
+                    const isBuy = t.type === 'buy'
+                    return (
+                      <tr key={t.id} className="border-t border-gray-100 dark:border-gray-700">
+                        <td className="whitespace-nowrap px-4 py-2.5 text-gray-600 dark:text-gray-400">{new Date(t.occurred_at).toLocaleDateString()}</td>
+                        <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100">
+                          {t.holding_id ? <Link href={`/investments/${t.holding_id}`} className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{t.asset_name}</Link> : t.asset_name}
+                        </td>
+                        <td className={`px-4 py-2.5 text-xs font-semibold ${isBuy ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{isBuy ? 'Buy' : 'Sell'}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">{formatQuantity(t.quantity)}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right text-gray-600 dark:text-gray-400">{formatCurrency(t.price_per_unit, t.currency)}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right text-gray-600 dark:text-gray-400">{t.fee === null ? '' : formatCurrency(t.fee, t.currency)}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right font-medium text-gray-900 dark:text-gray-100">{formatCurrency(t.total_amount, t.currency)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingHolding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeEdit}>
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edit {editingHolding.asset_name}</h2>
               <button onClick={closeEdit} className="rounded-lg p-1 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:text-gray-600 dark:hover:text-gray-300">
@@ -684,8 +821,8 @@ export default function InvestmentsPage() {
               </div>
               <div>
                 <p className="text-xs uppercase text-gray-400 dark:text-gray-500">Return</p>
-                <p className={`font-medium ${editingHolding.returnPercentage === null ? 'text-gray-400 dark:text-gray-500' : editingHolding.returnPercentage >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {editingHolding.returnPercentage === null ? 'N/A' : `${editingHolding.returnPercentage}%`}
+                <p className={`font-medium ${editingHolding.returnPercentageExcludingFees === null ? 'text-gray-400 dark:text-gray-500' : editingHolding.returnPercentageExcludingFees >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {editingHolding.returnPercentageExcludingFees === null ? 'N/A' : `${editingHolding.returnPercentageExcludingFees}%`}
                 </p>
               </div>
               <div>
@@ -708,7 +845,7 @@ export default function InvestmentsPage() {
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Current Price</label>
                 <div className="flex gap-2">
-                  <input type="number" value={editForm.price} onChange={(e) => setEditForm({ ...editForm, price: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <input type="number" step="any" value={editForm.price} onChange={(e) => setEditForm({ ...editForm, price: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <button onClick={handleSavePrice} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
@@ -738,25 +875,34 @@ export default function InvestmentsPage() {
 
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Add Quantity (e.g. monthly top-up / DCA)</label>
-                <div className="flex gap-2">
-                  <input type="number" placeholder="qty" value={editForm.addQty} onChange={(e) => setEditForm({ ...editForm, addQty: e.target.value })} className="w-28 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="number" step="any" min="0" placeholder="Quantity" value={editForm.addQty} onChange={(e) => setEditForm({ ...editForm, addQty: e.target.value })} className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <input
                     type="number"
-                    placeholder={`Total spent (${editingHolding.currency})`}
-                    title="Include any brokerage/exchange fees in this total"
+                    step="any"
+                    min="0"
+                    placeholder={`Price per unit (${editingHolding.currency})`}
+                    title="The price per unit on your trade confirmation, before fees"
+                    value={editForm.addPrice}
+                    onChange={(e) => setEditForm({ ...editForm, addPrice: e.target.value })}
+                    className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder="Total incl. fee (opt.)"
+                    title="What actually left your account, fees included. Leave empty if there was no fee."
                     value={editForm.addTotalSpent}
                     onChange={(e) => setEditForm({ ...editForm, addTotalSpent: e.target.value })}
-                    className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
+                    className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
                   />
-                  <button onClick={handleAddToHolding} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700">Add</button>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <input type="date" title="Date of this purchase" value={editForm.addDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, addDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <input type="date" title="Date of this purchase" value={editForm.addDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, addDate: e.target.value })} className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <select
                     value={editForm.addAccountId}
                     onChange={(e) => setEditForm({ ...editForm, addAccountId: e.target.value })}
                     title="Optional — deducts the total spent from this account's balance automatically"
-                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
+                    className="col-span-2 min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
                   >
                     <option value="">Pay from account (optional)</option>
                     {accounts.filter((a) => !a.is_archived && a.currency === editingHolding.currency).map((a) => (
@@ -764,17 +910,21 @@ export default function InvestmentsPage() {
                     ))}
                   </select>
                 </div>
-                {editForm.addQty > 0 && editForm.addTotalSpent > 0 && (
-                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                    ≈ {formatCurrency(Number(editForm.addTotalSpent) / Number(editForm.addQty), editingHolding.currency)} per unit
-                  </p>
-                )}
+                <PurchaseSummary
+                  quantity={editForm.addQty}
+                  price={editForm.addPrice}
+                  totalPaid={editForm.addTotalSpent}
+                  currency={editingHolding.currency}
+                  accountName={editForm.addAccountId ? accounts.find((a) => a.id === Number(editForm.addAccountId))?.name : null}
+                  className="mt-1 text-xs text-gray-500 dark:text-gray-400"
+                />
+                <button onClick={handleAddToHolding} className="mt-2 w-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-emerald-700">Add</button>
               </div>
 
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Remove Quantity (e.g. on sale)</label>
                 <div className="flex gap-2">
-                  <input type="number" placeholder="Qty" value={editForm.removeQty} onChange={(e) => setEditForm({ ...editForm, removeQty: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <input type="number" step="any" placeholder="Qty" value={editForm.removeQty} onChange={(e) => setEditForm({ ...editForm, removeQty: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <input type="date" title="Date of this sale" value={editForm.removeDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, removeDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                   <button onClick={handleRemoveClick} className="rounded-lg bg-red-500 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-red-600">Remove</button>
                 </div>

@@ -31,6 +31,11 @@ router.get('/transactions', asyncHandler(async (req, res) => {
   res.json({ success: true, transactions })
 }))
 
+router.get('/:id/detail', asyncHandler(async (req, res) => {
+  const holding = await investmentsService.getHoldingDetail(req.userId, Number(req.params.id))
+  res.json({ success: true, holding })
+}))
+
 router.patch('/:id/price', asyncHandler(async (req, res) => {
   const holding = await investmentsService.updatePrice(req.userId, Number(req.params.id), req.body?.currentPrice)
   res.json({ success: true, holding })
@@ -62,7 +67,7 @@ router.post('/:id/remove', asyncHandler(async (req, res) => {
 }))
 
 router.get('/allocation-targets', asyncHandler(async (req, res) => {
-  const comparison = await investmentsService.getAllocationComparison(req.userId)
+  const comparison = await investmentsService.getAllocationComparison(req.userId, { compareOffset: req.query.compareOffset })
   res.json({ success: true, ...comparison })
 }))
 

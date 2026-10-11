@@ -3,8 +3,24 @@ const { query, pool, withTransaction } = require('../db/pool')
 const { loadSql } = require('../db/loadSql')
 const { badRequest, assertOwned } = require('../shared/utils')
 const { isValidCurrencyCode } = require('../shared/currencyCodes')
+const { resolveEntryTime } = require('../shared/entryDate')
+const { shiftNetWorthHistory, shiftInvestmentHistory } = require('./netWorthHistory')
+
+// A backdated buy/sell also corrects the saved daily history (net worth and
+// portfolio charts) from its date: units valued at the trade price, plus the
+// cash that left a linked account. Nothing to do for a trade made today.
+const correctHistoryForTrade = async (userId, { tradeTime, holding, valueDelta, costDelta, cashDelta }) => {
+  if (!tradeTime) return
+  const changes = [{ occurredAt: tradeTime, amount: valueDelta, currency: holding.currency }]
+  if (cashDelta) changes.push({ occurredAt: tradeTime, amount: cashDelta, currency: holding.currency })
+  await shiftNetWorthHistory(userId, changes)
+  await shiftInvestmentHistory(userId, {
+    holdingId: holding.id, assetName: holding.asset_name, occurredAt: tradeTime, valueDelta, costDelta, currency: holding.currency
+  })
+}
 const currencyService = require('./currency')
 const accountsService = require('./accounts')
+const periods = require('../shared/periods')
 
 // current_price is stored as NUMERIC(24,8) — 8 digits are reserved for the
 // decimal part, so the integer part must stay under 16 digits (< 10^16,
@@ -34,6 +50,8 @@ const SQL = {
   setTargetCagr: loadSql('investments/setTargetCagr'),
   listAllocationTargets: loadSql('investments/listAllocationTargets'),
   getTargetCagr: loadSql('investments/getTargetCagr'),
+  listHoldingSnapshotsAsOf: loadSql('investments/listHoldingSnapshotsAsOf'),
+  getHistoryStartDate: loadSql('investments/getHistoryStartDate'),
   insertOrUpdateSnapshot: loadSql('investments/insertOrUpdateSnapshot'),
   getHistory: loadSql('investments/getHistory'),
   listAllUserIds: loadSql('investments/listAllUserIds'),
@@ -41,32 +59,31 @@ const SQL = {
   getHoldingsHistory: loadSql('investments/getHoldingsHistory'),
   listCategoriesByHolding: loadSql('investments/listCategoriesByHolding'),
   logTransaction: loadSql('investments/logTransaction'),
-  listTransactions: loadSql('investments/listTransactions')
+  listTransactions: loadSql('investments/listTransactions'),
+  listTransactionsForHolding: loadSql('investments/listTransactionsForHolding')
 }
 
 // Records one row in the investment_transactions "mutasi" log — called
 // inside the same withTransaction block as the holding/balance change it
 // documents, so a buy or sell can never exist without its log entry (or
 // vice versa). realizedGain is only meaningful for a 'sell'.
-const logInvestmentTransaction = (client, { userId, holdingId, assetName, category, type, quantity, pricePerUnit, totalAmount, currency, realizedGain, accountId, occurredAt }) => (
+const logInvestmentTransaction = (client, { userId, holdingId, assetName, category, type, quantity, pricePerUnit, totalAmount, currency, realizedGain, accountId, occurredAt, fee }) => (
   client.query(SQL.logTransaction, [
-    userId, holdingId, assetName, category || null, type, quantity, pricePerUnit, totalAmount, currency, realizedGain ?? null, accountId || null, occurredAt || null
+    userId, holdingId, assetName, category || null, type, quantity, pricePerUnit, totalAmount, currency, realizedGain ?? null, accountId || null, occurredAt || null, fee ?? null
   ])
 )
 
-// A buy/sell can be logged for the day it actually happened rather than the
-// day it was entered. A date-only value ('YYYY-MM-DD') is stored at midday;
-// today's date (or none at all) keeps the current time, so entries made
-// today stay in the order they were entered.
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
-const resolveTradeTime = (date) => {
-  if (date === undefined || date === null || date === '') return null
-  if (!DATE_ONLY.test(date)) throw badRequest('date must be in YYYY-MM-DD format')
-  const now = new Date()
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  if (date > today) throw badRequest('date cannot be in the future')
-  return date === today ? null : `${date}T12:00:00`
-}
+const roundCents = (value) => Math.round(value * 100) / 100
+
+// The fee on a purchase is whatever was paid on top of quantity × market
+// price — only knowable when both the total paid and the market price were
+// given. null means "unknown" (stored as such, counted as 0 in totals).
+const feeFromPurchase = (totalSpent, quantity, price) => (
+  price === null ? null : Math.max(0, roundCents(totalSpent - quantity * price))
+)
+
+// A buy/sell can be logged for the day it actually happened (see shared/entryDate).
+const resolveTradeTime = (date) => resolveEntryTime(date)
 
 // accountId is optional — when given, the purchase (quantity × costBasis,
 // which the caller should already have folded any brokerage/exchange fee
@@ -77,22 +94,35 @@ const resolveTradeTime = (date) => {
 // account's currency to match the holding's currency rather than silently
 // auto-converting: the deducted amount must be the exact real amount that
 // left that account, not a rate-dependent estimate.
-const addHolding = async (userId, { assetName, assetType, quantity, currency, costBasis, category, purchasedAt, accountId }) => {
+// The purchase can be given as totalSpent — everything actually paid, fees
+// included, the same way adding to an existing holding works — or as a
+// per-unit costBasis. With totalSpent, the per-unit cost is derived from it,
+// so the amount deducted from a linked account is exactly what left it.
+// An optional price (the market price per unit, without fees) becomes the
+// holding's current price; otherwise it starts at the per-unit cost.
+const addHolding = async (userId, { assetName, assetType, quantity, currency, costBasis, totalSpent: totalSpentInput, price, category, purchasedAt, accountId }) => {
   const tradeTime = resolveTradeTime(purchasedAt)
   if (typeof assetName !== 'string' || assetName.trim() === '') throw badRequest('assetName is required')
   if (typeof assetType !== 'string' || assetType.trim() === '') throw badRequest('assetType is required')
   const numericQuantity = Number(quantity)
   if (!(numericQuantity > 0)) throw badRequest('quantity must be a positive number')
   if (!isValidCurrencyCode(currency)) throw badRequest('A valid ISO 4217 currency code is required')
-  if (costBasis !== undefined && costBasis !== null && costBasis !== '' && Number(costBasis) < 0) {
+  const hasTotal = totalSpentInput !== undefined && totalSpentInput !== null && totalSpentInput !== ''
+  if (hasTotal && !(Number(totalSpentInput) >= 0)) throw badRequest('totalSpent cannot be negative')
+  if (!hasTotal && costBasis !== undefined && costBasis !== null && costBasis !== '' && Number(costBasis) < 0) {
     throw badRequest('costBasis cannot be negative')
   }
-  const numericCostBasis = Number(costBasis) || 0
+  const totalSpent = hasTotal ? Math.round(Number(totalSpentInput) * 100) / 100 : numericQuantity * (Number(costBasis) || 0)
+  const numericCostBasis = hasTotal ? totalSpent / numericQuantity : (Number(costBasis) || 0)
   assertValidPrice(numericCostBasis, 'costBasis')
+  const hasPrice = price !== undefined && price !== null && price !== ''
+  if (hasPrice && !(Number(price) >= 0)) throw badRequest('price cannot be negative')
+  const currentPrice = hasPrice ? Number(price) : numericCostBasis
+  assertValidPrice(currentPrice, 'price')
+  const fee = hasTotal && hasPrice ? feeFromPurchase(totalSpent, numericQuantity, Number(price)) : null
   const trimmedCategory = typeof category === 'string' && category.trim() !== '' ? category.trim() : null
-  const totalSpent = numericQuantity * numericCostBasis
 
-  const insertParams = [userId, assetName.trim(), assetType.trim(), numericQuantity, currency.toUpperCase(), totalSpent, numericCostBasis, trimmedCategory, purchasedAt || null]
+  const insertParams = [userId, assetName.trim(), assetType.trim(), numericQuantity, currency.toUpperCase(), totalSpent, currentPrice, trimmedCategory, purchasedAt || null, fee ?? 0]
 
   let account = null
   if (accountId !== undefined && accountId !== null && accountId !== '') {
@@ -110,10 +140,13 @@ const addHolding = async (userId, { assetName, assetType, quantity, currency, co
     }
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: trimmedCategory, type: 'buy',
-      quantity: numericQuantity, pricePerUnit: numericCostBasis, totalAmount: totalSpent, currency: currency.toUpperCase(),
-      accountId: account?.id, occurredAt: tradeTime
+      quantity: numericQuantity, pricePerUnit: hasPrice ? Number(price) : numericCostBasis, totalAmount: totalSpent, currency: currency.toUpperCase(),
+      accountId: account?.id, occurredAt: tradeTime, fee
     })
     return holding
+  })
+  await correctHistoryForTrade(userId, {
+    tradeTime, holding: created, valueDelta: numericQuantity * currentPrice, costDelta: totalSpent, cashDelta: account ? -totalSpent : 0
   })
   await takeSnapshot(userId)
   return created
@@ -122,6 +155,54 @@ const addHolding = async (userId, { assetName, assetType, quantity, currency, co
 const getHoldingById = async (userId, id) => {
   const result = await query(SQL.getById, [id])
   return assertOwned(result.rows[0], userId, 'Investment holding not found')
+}
+
+// Everything about one holding, in its own currency: cost basis with and
+// without fees (the latter is what broker apps usually show), current value,
+// unrealized P/L, and its buy/sell history.
+const getHoldingDetail = async (userId, id) => {
+  const holding = await getHoldingById(userId, id)
+  const quantity = Number(holding.quantity)
+  const costBasis = Number(holding.cost_basis_total)
+  const feesTotal = Number(holding.fees_total)
+  const currentPrice = Number(holding.current_price)
+  const value = roundCents(quantity * currentPrice)
+  const costBasisExcludingFees = roundCents(costBasis - feesTotal)
+  const perUnit = (total) => (quantity > 0 ? total / quantity : null)
+
+  const transactions = (await query(SQL.listTransactionsForHolding, [userId, holding.id])).rows.map((t) => ({
+    id: t.id,
+    type: t.type,
+    occurredAt: t.occurred_at,
+    quantity: Number(t.quantity),
+    pricePerUnit: Number(t.price_per_unit),
+    fee: t.fee === null ? null : Number(t.fee),
+    totalAmount: Number(t.total_amount),
+    realizedGain: t.realized_gain === null ? null : Number(t.realized_gain)
+  }))
+
+  return {
+    id: holding.id,
+    assetName: holding.asset_name,
+    assetType: holding.asset_type,
+    category: holding.category,
+    currency: holding.currency,
+    purchasedAt: holding.purchased_at,
+    isClosed: holding.is_closed,
+    quantity,
+    currentPrice,
+    value,
+    costBasis,
+    costBasisExcludingFees,
+    feesTotal,
+    averagePrice: perUnit(costBasis),
+    averagePriceExcludingFees: perUnit(costBasisExcludingFees),
+    unrealizedGain: roundCents(value - costBasis),
+    unrealizedGainExcludingFees: roundCents(value - costBasisExcludingFees),
+    returnPercentage: costBasis > 0 ? Math.round(((value - costBasis) / costBasis) * 1000) / 10 : null,
+    returnPercentageExcludingFees: returnExcludingFees(holding),
+    transactions
+  }
 }
 
 const updatePrice = async (userId, id, currentPrice) => {
@@ -143,6 +224,15 @@ const updatePrice = async (userId, id, currentPrice) => {
 // the user's display currency before totaling, mirroring how `accounts`
 // handles multi-currency balances (design.md Decision 1). A holding whose
 // currency has no cached rate is flagged rather than mis-totaled.
+// Return measured against the cost basis without fees, the way broker apps
+// show it. A ratio, so it can be worked out in the holding's own currency.
+const returnExcludingFees = (holding) => {
+  const costExcludingFees = Number(holding.cost_basis_total) - Number(holding.fees_total || 0)
+  if (!(costExcludingFees > 0)) return null
+  const value = Number(holding.quantity) * Number(holding.current_price)
+  return Math.round(((value - costExcludingFees) / costExcludingFees) * 1000) / 10
+}
+
 const getPortfolio = async (userId) => {
   const displayCurrency = await accountsService.getDisplayCurrency(userId)
   const result = await query(SQL.listOpenForUser, [userId])
@@ -163,7 +253,7 @@ const getPortfolio = async (userId) => {
 
     if (!convertedValue.available || !convertedCostBasis.available) {
       hasUnconverted = true
-      holdings.push({ ...holding, currentValue: null, unrealizedGain: null, returnPercentage: null, converted: false })
+      holdings.push({ ...holding, currentValue: null, unrealizedGain: null, returnPercentage: null, returnPercentageExcludingFees: returnExcludingFees(holding), converted: false })
       continue
     }
 
@@ -177,6 +267,7 @@ const getPortfolio = async (userId) => {
       currentValue: Math.round(value * 100) / 100,
       unrealizedGain: Math.round(gain * 100) / 100,
       returnPercentage: costBasis > 0 ? Math.round((gain / costBasis) * 1000) / 10 : null,
+      returnPercentageExcludingFees: returnExcludingFees(holding),
       converted: true
     })
   }
@@ -228,20 +319,32 @@ const setPurchasedAt = async (userId, id, purchasedAt) => {
 // invested since the original date, understating how new they actually are.
 // accountId is optional, same deal as addHolding — deducts this top-up's
 // spend from a linked account (must match the holding's currency) in the
-// same transaction as the quantity/cost-basis update.
-const addToHolding = async (userId, id, { quantity, costBasis, accountId, date }) => {
+// same transaction as the quantity/cost-basis update. Like addHolding, the
+// purchase can be given as totalSpent (fees included) or a per-unit
+// costBasis. An optional market price works out this purchase's fee but does
+// not touch the holding's last price — that is set once when the holding is
+// created and changed only by an explicit price update, so recording an older
+// purchase can't overwrite today's price with a stale one.
+const addToHolding = async (userId, id, { quantity, costBasis, totalSpent: totalSpentInput, price, accountId, date }) => {
   const tradeTime = resolveTradeTime(date)
   const numericQuantity = Number(quantity)
   if (!(numericQuantity > 0)) throw badRequest('quantity must be a positive number')
-  if (costBasis !== undefined && costBasis !== null && costBasis !== '' && Number(costBasis) < 0) {
+  const hasTotal = totalSpentInput !== undefined && totalSpentInput !== null && totalSpentInput !== ''
+  if (hasTotal && !(Number(totalSpentInput) >= 0)) throw badRequest('totalSpent cannot be negative')
+  if (!hasTotal && costBasis !== undefined && costBasis !== null && costBasis !== '' && Number(costBasis) < 0) {
     throw badRequest('costBasis cannot be negative')
   }
-  const numericCostBasis = Number(costBasis) || 0
+  const totalSpent = hasTotal ? Math.round(Number(totalSpentInput) * 100) / 100 : numericQuantity * (Number(costBasis) || 0)
+  const numericCostBasis = hasTotal ? totalSpent / numericQuantity : (Number(costBasis) || 0)
+  const hasPrice = price !== undefined && price !== null && price !== ''
+  if (hasPrice && !(Number(price) >= 0)) throw badRequest('price cannot be negative')
+  if (hasPrice) assertValidPrice(Number(price), 'price')
   const holding = await getHoldingById(userId, id)
 
   const newQuantity = Number(holding.quantity) + numericQuantity
-  const totalSpent = numericQuantity * numericCostBasis
   const newCostBasisTotal = Number(holding.cost_basis_total) + totalSpent
+  const fee = hasTotal && hasPrice ? feeFromPurchase(totalSpent, numericQuantity, Number(price)) : null
+  const newFeesTotal = roundCents(Number(holding.fees_total) + (fee ?? 0))
 
   let account = null
   if (accountId !== undefined && accountId !== null && accountId !== '') {
@@ -252,16 +355,19 @@ const addToHolding = async (userId, id, { quantity, costBasis, accountId, date }
   }
 
   const updated = await withTransaction(async (client) => {
-    const result = await client.query(SQL.addToHolding, [newQuantity, newCostBasisTotal, holding.id])
+    const result = await client.query(SQL.addToHolding, [newQuantity, newCostBasisTotal, newFeesTotal, holding.id])
     if (account) {
       await accountsService.applyBalanceDelta(client, account.id, -totalSpent)
     }
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: holding.category, type: 'buy',
-      quantity: numericQuantity, pricePerUnit: numericCostBasis, totalAmount: totalSpent, currency: holding.currency,
-      accountId: account?.id, occurredAt: tradeTime
+      quantity: numericQuantity, pricePerUnit: hasPrice ? Number(price) : numericCostBasis, totalAmount: totalSpent, currency: holding.currency,
+      accountId: account?.id, occurredAt: tradeTime, fee
     })
     return result.rows[0]
+  })
+  await correctHistoryForTrade(userId, {
+    tradeTime, holding, valueDelta: numericQuantity * (hasPrice ? Number(price) : numericCostBasis), costDelta: totalSpent, cashDelta: account ? -totalSpent : 0
   })
   await takeSnapshot(userId)
   return updated
@@ -286,13 +392,17 @@ const removeHolding = async (userId, id, quantity, date) => {
   const realizedGain = (salePricePerUnit - costBasisPerUnit) * numericQuantity
 
   const updated = await withTransaction(async (client) => {
-    const result = await client.query(SQL.removeQuantity, [remaining, remaining * costBasisPerUnit, remaining === 0, holding.id])
+    const remainingFees = roundCents(Number(holding.fees_total) * (remaining / Number(holding.quantity)))
+    const result = await client.query(SQL.removeQuantity, [remaining, remaining * costBasisPerUnit, remaining === 0, remainingFees, holding.id])
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: holding.category, type: 'sell',
       quantity: numericQuantity, pricePerUnit: salePricePerUnit, totalAmount: saleProceeds, currency: holding.currency,
       realizedGain: Math.round(realizedGain * 100) / 100, occurredAt: tradeTime
     })
     return result.rows[0]
+  })
+  await correctHistoryForTrade(userId, {
+    tradeTime, holding, valueDelta: -numericQuantity * salePricePerUnit, costDelta: -numericQuantity * costBasisPerUnit, cashDelta: 0
   })
   await takeSnapshot(userId)
   return updated
@@ -394,7 +504,53 @@ const setAllocationTargets = async (userId, targets, targetCagr) => {
 // so accidental stray spaces from typing don't silently break a match.
 const normalizeAssetName = (name) => name.trim().toUpperCase()
 
-const getAllocationComparison = async (userId) => {
+const toDateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// What was held at the end of `asOf` ('YYYY-MM-DD'), grouped the same way as
+// the current allocation: accounts by type, using each one's balance as of
+// that day from its statement, and holdings by category (or asset name),
+// using each one's last saved daily value by then. Foreign-currency account
+// balances convert at today's rate, since past rates aren't kept.
+const getAllocationValuesAsOf = async (userId, asOf, displayCurrency) => {
+  const values = new Map()
+  let hasUnconverted = false
+  const add = (key, amount) => values.set(key, (values.get(key) || 0) + amount)
+
+  for (const account of await accountsService.listAccounts(userId)) {
+    const { closingBalance } = await accountsService.getStatement(userId, account.id, { endDate: asOf })
+    const { amount, available } = await currencyService.convertAmount(closingBalance, account.currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    add(account.type, amount)
+  }
+
+  const snapshots = await query(SQL.listHoldingSnapshotsAsOf, [userId, asOf])
+  for (const row of snapshots.rows) {
+    const { amount, available } = await currencyService.convertAmount(Number(row.value), row.display_currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    add((row.category && row.category.trim()) || row.asset_name, amount)
+  }
+
+  return { values, hasUnconverted }
+}
+
+// Ends of past budget cycles, most recent first ({ offset: 1 } is the cycle
+// before the current one), back to the first one the app has history for.
+const listPastCycleEnds = async (userId, limit = 24) => {
+  const startDate = (await query(SQL.getHistoryStartDate, [userId])).rows[0]?.start_date
+  if (!startDate) return []
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const ends = []
+  for (let offset = 1; offset <= limit; offset++) {
+    const asOf = toDateKey(periods.getPeriodBoundsForOffset(cycleStartDay, offset).end)
+    if (asOf < startDate) break
+    ends.push({ offset, asOf })
+  }
+  return ends
+}
+
+// compareOffset picks which past cycle end the actual allocation is compared
+// with (1 = end of the last cycle, the default).
+const getAllocationComparison = async (userId, { compareOffset } = {}) => {
   const targetsResult = await query(SQL.listAllocationTargets, [userId])
   const portfolio = await getPortfolio(userId)
 
@@ -421,14 +577,31 @@ const getAllocationComparison = async (userId) => {
   // Asset Allocation's own treatment of an "uncategorized" position).
   const { netWorth } = await accountsService.getNetWorth(userId)
 
+  const compareOptions = await listPastCycleEnds(userId)
+  const compareWith = compareOptions.find((o) => o.offset === Number(compareOffset)) || compareOptions[0] || null
+  let previousByAssetName = null
+  let previousTotal = 0
+  if (compareWith) {
+    const { values } = await getAllocationValuesAsOf(userId, compareWith.asOf, portfolio.displayCurrency)
+    previousByAssetName = new Map()
+    for (const [key, amount] of values) {
+      const name = normalizeAssetName(key)
+      previousByAssetName.set(name, (previousByAssetName.get(name) || 0) + amount)
+      previousTotal += amount
+    }
+  }
+
   const comparison = targetsResult.rows.map((t) => {
-    const actualValue = valueByAssetName.get(normalizeAssetName(t.asset_name)) || 0
+    const name = normalizeAssetName(t.asset_name)
+    const actualValue = valueByAssetName.get(name) || 0
     const actualPercentage = netWorth !== 0 ? Math.round((actualValue / netWorth) * 1000) / 10 : 0
+    const previousValue = previousByAssetName ? previousByAssetName.get(name) || 0 : null
     return {
       assetName: t.asset_name,
       targetPercentage: Number(t.target_percentage),
       actualPercentage,
-      actualValue: Math.round(actualValue * 100) / 100
+      actualValue: Math.round(actualValue * 100) / 100,
+      previousPercentage: previousValue === null ? null : (previousTotal !== 0 ? Math.round((previousValue / previousTotal) * 1000) / 10 : 0)
     }
   })
 
@@ -444,6 +617,8 @@ const getAllocationComparison = async (userId) => {
     totalValue: portfolio.totalValue,
     netWorth,
     comparison,
+    compareWith,
+    compareOptions,
     targetCagr,
     actualCagr
   }
@@ -603,6 +778,7 @@ const listTransactions = async (userId) => {
 module.exports = {
   addHolding,
   getHoldingById,
+  getHoldingDetail,
   updatePrice,
   renameHolding,
   setCategory,
@@ -613,6 +789,7 @@ module.exports = {
   removeHolding,
   setAllocationTargets,
   getAllocationComparison,
+  getAllocationValuesAsOf,
   takeSnapshot,
   takeAllUsersSnapshots,
   catchUpAllUsersSnapshots,
