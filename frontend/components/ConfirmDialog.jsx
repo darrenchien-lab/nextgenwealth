@@ -1,9 +1,10 @@
 // Shared replacement for window.confirm() — a plain browser dialog that
 // can't be styled and looks jarring next to the app's own modals (e.g. the
 // Edit dialog). This renders as a normal React modal instead, so every
-// "are you sure?" moment in the app looks consistent.
+// "are you sure?" moment in the app looks consistent. Optional children
+// (e.g. a date picker) render between the message and the buttons.
 export default function ConfirmDialog({
-  open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = true, onConfirm, onCancel
+  open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = true, onConfirm, onCancel, children
 }) {
   if (!open) return null
 
@@ -12,6 +13,7 @@ export default function ConfirmDialog({
       <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
         {message && <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{message}</p>}
+        {children && <div className="mt-4">{children}</div>}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-gray-700">
             {cancelLabel}

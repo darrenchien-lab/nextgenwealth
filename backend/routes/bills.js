@@ -29,7 +29,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 }))
 
 router.post('/:id/pay', asyncHandler(async (req, res) => {
-  const bill = await billsService.payBill(req.userId, Number(req.params.id))
+  const bill = await billsService.payBill(req.userId, Number(req.params.id), { paidOn: req.body?.paidOn })
   res.json({ success: true, bill })
 }))
 

@@ -5,6 +5,8 @@ const { badRequest, conflict, assertOwned } = require('../shared/utils')
 const { validateFrequency, computeNextDueDate } = require('../shared/recurrence')
 const accountsService = require('./accounts')
 const currencyService = require('./currency')
+const { resolveEntryTime } = require('../shared/entryDate')
+const { shiftNetWorthHistory } = require('./netWorthHistory')
 
 require('dotenv').config()
 const DEFAULT_REMINDER_WINDOW_DAYS = Number(process.env.BILL_REMINDER_WINDOW_DAYS || 7)
@@ -77,13 +79,17 @@ const getBillById = async (userId, id) => {
   return assertOwned(result.rows[0], userId, 'Bill not found')
 }
 
-const payBill = async (userId, id) => {
+// paidOn ('YYYY-MM-DD', optional) is when the bill was actually paid — a
+// payment recorded a few days late still lands in the right budget cycle.
+const payBill = async (userId, id, { paidOn } = {}) => {
+  const paidAt = resolveEntryTime(paidOn, 'paidOn')
   const bill = await getBillById(userId, id)
   if (bill.status === 'paid') throw conflict('This bill cycle has already been paid')
   if (!bill.account_id) throw badRequest('Bill has no linked account to pay from')
 
-  return withTransaction(async (client) => {
-    await client.query(SQL.insertPaymentTransaction, [userId, bill.account_id, bill.category_id, bill.amount, bill.id, bill.notes])
+  const account = await accountsService.getAccountById(userId, bill.account_id)
+  const paid = await withTransaction(async (client) => {
+    await client.query(SQL.insertPaymentTransaction, [userId, bill.account_id, bill.category_id, bill.amount, bill.id, bill.notes, paidAt])
     await accountsService.applyBalanceDelta(client, bill.account_id, -Number(bill.amount))
 
     if (bill.recurrence_rule_id) {
@@ -98,6 +104,8 @@ const payBill = async (userId, id) => {
     const updated = await client.query(SQL.markPaid, [bill.id])
     return updated.rows[0]
   })
+  await shiftNetWorthHistory(userId, [{ occurredAt: paidAt || new Date(), amount: -Number(bill.amount), currency: account.currency }])
+  return paid
 }
 
 const listUpcomingBills = async (userId, windowDays = DEFAULT_REMINDER_WINDOW_DAYS) => {

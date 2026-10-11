@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
+import { todayInputValue } from '@/lib/dates'
 
 export default function GoalsPage() {
   const [goals, setGoals] = useState([])
@@ -10,6 +11,8 @@ export default function GoalsPage() {
   const [loadError, setLoadError] = useState('')
   const [actionError, setActionError] = useState('')
   const [amounts, setAmounts] = useState({})
+  // Per goal: when the money was set aside or taken back (defaults to today).
+  const [dates, setDates] = useState({})
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', targetAmount: '', targetDate: '' })
   const [formError, setFormError] = useState('')
@@ -112,7 +115,7 @@ export default function GoalsPage() {
   async function handleContribute(id) {
     setActionError('')
     try {
-      await request(`/goals/${id}/contribute`, { method: 'POST', body: JSON.stringify({ amount: Number(amounts[id] || 0) }) })
+      await request(`/goals/${id}/contribute`, { method: 'POST', body: JSON.stringify({ amount: Number(amounts[id] || 0), date: dates[id] || undefined }) })
       loadGoals()
     } catch (err) {
       setActionError(err.message || 'Failed to contribute')
@@ -122,7 +125,7 @@ export default function GoalsPage() {
   async function handleWithdraw(id) {
     setActionError('')
     try {
-      await request(`/goals/${id}/withdraw`, { method: 'POST', body: JSON.stringify({ amount: Number(amounts[id] || 0) }) })
+      await request(`/goals/${id}/withdraw`, { method: 'POST', body: JSON.stringify({ amount: Number(amounts[id] || 0), date: dates[id] || undefined }) })
       loadGoals()
     } catch (err) {
       setActionError(err.message || 'Failed to withdraw')
@@ -157,7 +160,7 @@ export default function GoalsPage() {
       {showForm && (
         <form onSubmit={handleCreate} className="grid grid-cols-1 gap-3 rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 sm:grid-cols-3">
           <input placeholder="Goal name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-          <input type="number" placeholder="Target amount" required value={form.targetAmount} onChange={(e) => setForm({ ...form, targetAmount: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+          <input type="number" step="any" placeholder="Target amount" required value={form.targetAmount} onChange={(e) => setForm({ ...form, targetAmount: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
           <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
           {formError && <p className="col-span-full text-sm text-red-600 dark:text-red-400">{formError}</p>}
           <button type="submit" className="col-span-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700">Create</button>
@@ -189,18 +192,26 @@ export default function GoalsPage() {
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 {formatCurrency(goal.saved_amount, goal.currency)} of {formatCurrency(goal.target_amount, goal.currency)} ({goal.progressPercentage}%)
               </p>
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <input
-                  type="number"
+                  type="number" step="any"
                   placeholder="Amount"
                   value={amounts[goal.id] || ''}
                   onChange={(e) => setAmounts({ ...amounts, [goal.id]: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-2 py-1 text-sm"
+                  className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-2 py-1 text-sm"
+                />
+                <input
+                  type="date"
+                  title="When the money was added or taken out"
+                  value={dates[goal.id] || todayInputValue()}
+                  max={todayInputValue()}
+                  onChange={(e) => setDates({ ...dates, [goal.id]: e.target.value })}
+                  className="w-36 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-2 py-1 text-sm"
                 />
                 <button onClick={() => handleContribute(goal.id)} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
                   Add
                 </button>
-                <button onClick={() => handleWithdraw(goal.id)} className="whitespace-nowrap rounded-lg bg-gray-200 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500">
+                <button onClick={() => handleWithdraw(goal.id)} className="whitespace-nowrap rounded-lg bg-gray-200 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-100 dark:hover:bg-gray-500">
                   Withdraw
                 </button>
               </div>
@@ -231,7 +242,7 @@ export default function GoalsPage() {
                 className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
               />
               <input
-                type="number"
+                type="number" step="any"
                 placeholder="Target %"
                 value={row.targetPercentage}
                 onChange={(e) => updateTargetRow(i, 'targetPercentage', e.target.value)}

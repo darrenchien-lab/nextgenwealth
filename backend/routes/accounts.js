@@ -74,7 +74,7 @@ router.put('/cycle-start-day', asyncHandler(async (req, res) => {
 }))
 
 router.patch('/:id/adjust', asyncHandler(async (req, res) => {
-  const account = await accountsService.adjustBalance(req.userId, Number(req.params.id), Number(req.body?.delta))
+  const account = await accountsService.adjustBalance(req.userId, Number(req.params.id), Number(req.body?.delta), req.body?.date)
   res.json({ success: true, account })
 }))
 

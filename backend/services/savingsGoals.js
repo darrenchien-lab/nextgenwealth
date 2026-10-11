@@ -3,6 +3,7 @@ const { query, withTransaction } = require('../db/pool')
 const { loadSql } = require('../db/loadSql')
 const { badRequest, assertOwned } = require('../shared/utils')
 const accountsService = require('./accounts')
+const { resolveEntryTime } = require('../shared/entryDate')
 
 const SQL = {
   create: loadSql('savingsGoals/create'),
@@ -28,19 +29,22 @@ const getGoalById = async (userId, id) => {
   return assertOwned(result.rows[0], userId, 'Savings goal not found')
 }
 
-const contribute = async (userId, id, amount) => {
+// date (optional, YYYY-MM-DD): when the money was actually set aside or taken back.
+const contribute = async (userId, id, amount, date) => {
+  const occurredAt = resolveEntryTime(date)
   const numericAmount = Number(amount)
   if (!(numericAmount > 0)) throw badRequest('Contribution amount must be a positive number')
   const goal = await getGoalById(userId, id)
 
   return withTransaction(async (client) => {
-    await client.query(SQL.insertContribution, [goal.id, numericAmount])
+    await client.query(SQL.insertContribution, [goal.id, numericAmount, occurredAt])
     const result = await client.query(SQL.increaseSavedAmount, [numericAmount, goal.id])
     return result.rows[0]
   })
 }
 
-const withdraw = async (userId, id, amount) => {
+const withdraw = async (userId, id, amount, date) => {
+  const occurredAt = resolveEntryTime(date)
   const numericAmount = Number(amount)
   if (!(numericAmount > 0)) throw badRequest('Withdrawal amount must be a positive number')
   const goal = await getGoalById(userId, id)
@@ -49,7 +53,7 @@ const withdraw = async (userId, id, amount) => {
   }
 
   return withTransaction(async (client) => {
-    await client.query(SQL.insertContribution, [goal.id, -numericAmount])
+    await client.query(SQL.insertContribution, [goal.id, -numericAmount, occurredAt])
     const result = await client.query(SQL.decreaseSavedAmount, [numericAmount, goal.id])
     return result.rows[0]
   })

@@ -3,6 +3,8 @@ const { withTransaction, query } = require('../db/pool')
 const { loadSql } = require('../db/loadSql')
 const { badRequest, conflict, assertOwned } = require('../shared/utils')
 const accountsService = require('./accounts')
+const { shiftNetWorthHistory } = require('./netWorthHistory')
+const { resolveEntryTime } = require('../shared/entryDate')
 const currencyService = require('./currency')
 
 const SQL = {
@@ -17,10 +19,13 @@ const SQL = {
 // resulting balance from the same before-balance/delta pair used for the
 // actual update (never re-read afterward, so it can't drift).
 const insertTransfer = async (userId, { fromAccount, toAccount, fromAmount, toAmount, occurredAt, notes, reversesTransferId }) => {
-  const fromBalanceAfter = Math.round((Number(fromAccount.balance) - fromAmount) * 100) / 100
-  const toBalanceAfter = Math.round((Number(toAccount.balance) + toAmount) * 100) / 100
+  // "Balance after" is worked out from the accounts' current balances, so it's
+  // only true for a transfer happening now — a backdated one leaves it blank
+  // (the account statement shows the running balance on its real date).
+  const fromBalanceAfter = occurredAt ? null : Math.round((Number(fromAccount.balance) - fromAmount) * 100) / 100
+  const toBalanceAfter = occurredAt ? null : Math.round((Number(toAccount.balance) + toAmount) * 100) / 100
 
-  return withTransaction(async (client) => {
+  const transfer = await withTransaction(async (client) => {
     await accountsService.applyBalanceDelta(client, fromAccount.id, -fromAmount)
     await accountsService.applyBalanceDelta(client, toAccount.id, toAmount)
     const result = await client.query(SQL.create,
@@ -28,6 +33,13 @@ const insertTransfer = async (userId, { fromAccount, toAccount, fromAmount, toAm
     )
     return result.rows[0]
   })
+  // Same-currency transfers cancel out; across currencies the two sides can
+  // differ slightly, and a backdated one should show that from its date.
+  await shiftNetWorthHistory(userId, [
+    { occurredAt: transfer.occurred_at, amount: -fromAmount, currency: fromAccount.currency },
+    { occurredAt: transfer.occurred_at, amount: toAmount, currency: toAccount.currency }
+  ])
+  return transfer
 }
 
 // A transfer moves money between two of the user's own accounts. It is
@@ -71,7 +83,7 @@ const createTransfer = async (userId, { fromAccountId, toAccountId, amount, toAm
     roundedToAmount = Math.round(convertedAmount * 100) / 100
   }
 
-  return insertTransfer(userId, { fromAccount, toAccount, fromAmount: numericAmount, toAmount: roundedToAmount, occurredAt, notes })
+  return insertTransfer(userId, { fromAccount, toAccount, fromAmount: numericAmount, toAmount: roundedToAmount, occurredAt: resolveEntryTime(occurredAt, 'occurredAt'), notes })
 }
 
 const listTransfers = async (userId) => {

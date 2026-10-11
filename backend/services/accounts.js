@@ -4,6 +4,8 @@ const { loadSql } = require('../db/loadSql')
 const { badRequest, conflict, assertOwned } = require('../shared/utils')
 const { isValidCurrencyCode } = require('../shared/currencyCodes')
 const currencyService = require('./currency')
+const { resolveEntryTime } = require('../shared/entryDate')
+const { shiftNetWorthHistory } = require('./netWorthHistory')
 
 const ACCOUNT_TYPES = ['bank', 'e_wallet', 'cash', 'credit_card']
 
@@ -28,6 +30,8 @@ const SQL = {
   getLedgerDeltaForAccount: loadSql('accounts/getLedgerDeltaForAccount'),
   logBalanceAdjustment: loadSql('accounts/logBalanceAdjustment'),
   getLatestBalanceAdjustment: loadSql('accounts/getLatestBalanceAdjustment'),
+  sumAdjustmentsAfter: loadSql('accounts/sumAdjustmentsAfter'),
+  shiftLaterAdjustments: loadSql('accounts/shiftLaterAdjustments'),
   listStatementEntries: loadSql('accounts/listStatementEntries')
 }
 
@@ -96,15 +100,31 @@ const applyBalanceDelta = async (client, accountId, delta) => {
 // the balance change itself, so reconcileBalances has a real anchor point
 // to reconstruct "expected" from instead of only ever knowing about
 // transactions/transfers (see that function's comment).
-const adjustBalance = async (userId, accountId, delta) => {
+// A correction can be dated earlier (date, 'YYYY-MM-DD') for a difference that
+// really arose back then. Its balance_after is the balance as of that date —
+// today's balance minus everything recorded after it — because
+// reconcileBalances uses the latest correction as a known-good checkpoint;
+// corrections made after that date have their balance_after shifted by the
+// same delta, since this one now sits underneath them.
+const adjustBalance = async (userId, accountId, delta, date) => {
   if (typeof delta !== 'number' || Number.isNaN(delta)) throw badRequest('Adjustment amount must be a number')
+  const occurredAt = resolveEntryTime(date)
   const account = await getAccountById(userId, accountId)
-  return withTransaction(async (client) => {
+  const updated = await withTransaction(async (client) => {
     const result = await client.query(SQL.adjustBalance, [delta, account.id])
-    const updated = result.rows[0]
-    await client.query(SQL.logBalanceAdjustment, [account.id, delta, updated.balance])
-    return updated
+    const row = result.rows[0]
+    let balanceAfter = Number(row.balance)
+    if (occurredAt) {
+      const ledgerAfter = (await client.query(SQL.getLedgerDeltaForAccount, [account.id, occurredAt])).rows[0].ledger_delta
+      const adjustmentsAfter = (await client.query(SQL.sumAdjustmentsAfter, [account.id, occurredAt])).rows[0].total
+      balanceAfter = Math.round((balanceAfter - Number(ledgerAfter) - Number(adjustmentsAfter)) * 100) / 100
+      await client.query(SQL.shiftLaterAdjustments, [delta, account.id, occurredAt])
+    }
+    await client.query(SQL.logBalanceAdjustment, [account.id, delta, balanceAfter, occurredAt])
+    return row
   })
+  await shiftNetWorthHistory(userId, [{ occurredAt: occurredAt || new Date(), amount: delta, currency: account.currency }])
+  return updated
 }
 
 const archiveAccount = async (userId, accountId) => {

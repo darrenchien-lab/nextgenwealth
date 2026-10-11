@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
+import { todayInputValue } from '@/lib/dates'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
@@ -57,12 +58,14 @@ export default function AccountsPage() {
   const [actionError, setActionError] = useState('')
   const [editingBalanceId, setEditingBalanceId] = useState(null)
   const [balanceInput, setBalanceInput] = useState('')
+  const [balanceDate, setBalanceDate] = useState('')
   const [deletingAccount, setDeletingAccount] = useState(null)
 
   const [transfers, setTransfers] = useState([])
   const [showTransferForm, setShowTransferForm] = useState(false)
   const [showAllTransfers, setShowAllTransfers] = useState(false)
-  const [transferForm, setTransferForm] = useState({ fromAccountId: '', toAccountId: '', amount: '', toAmount: '', notes: '' })
+  const emptyTransferForm = () => ({ fromAccountId: '', toAccountId: '', amount: '', toAmount: '', notes: '', occurredAt: todayInputValue() })
+  const [transferForm, setTransferForm] = useState(emptyTransferForm)
   const [transferError, setTransferError] = useState('')
   const [reversingTransfer, setReversingTransfer] = useState(null)
 
@@ -170,6 +173,7 @@ export default function AccountsPage() {
   function startEditBalance(account) {
     setEditingBalanceId(account.id)
     setBalanceInput(String(account.balance))
+    setBalanceDate(todayInputValue())
   }
 
   async function handleSaveBalance(account) {
@@ -182,7 +186,7 @@ export default function AccountsPage() {
     const delta = newBalance - Number(account.balance)
     try {
       if (delta !== 0) {
-        await request(`/accounts/${account.id}/adjust`, { method: 'PATCH', body: JSON.stringify({ delta }) })
+        await request(`/accounts/${account.id}/adjust`, { method: 'PATCH', body: JSON.stringify({ delta, date: balanceDate || undefined }) })
         loadAccounts()
       }
       setEditingBalanceId(null)
@@ -216,10 +220,11 @@ export default function AccountsPage() {
           toAccountId: Number(transferForm.toAccountId),
           amount: Number(transferForm.amount),
           toAmount: transferForm.toAmount ? Number(transferForm.toAmount) : undefined,
-          notes: transferForm.notes || undefined
+          notes: transferForm.notes || undefined,
+          occurredAt: transferForm.occurredAt || undefined
         })
       })
-      setTransferForm({ fromAccountId: '', toAccountId: '', amount: '', toAmount: '', notes: '' })
+      setTransferForm(emptyTransferForm())
       setShowTransferForm(false)
       loadAccounts()
       loadTransfers()
@@ -368,7 +373,7 @@ export default function AccountsPage() {
                 : currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <input
-              type="number"
+              type="number" step="any"
               placeholder="Initial balance"
               value={form.balance}
               onChange={(e) => setForm({ ...form, balance: e.target.value })}
@@ -449,6 +454,14 @@ export default function AccountsPage() {
                               onChange={(e) => setBalanceInput(e.target.value)}
                               onKeyDown={(e) => { if (e.key === 'Enter') handleSaveBalance(account); if (e.key === 'Escape') setEditingBalanceId(null) }}
                               className="w-28 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-2 py-1 text-sm"
+                            />
+                            <input
+                              type="date"
+                              title="When this difference happened — pick an earlier date if it belongs to a past period"
+                              value={balanceDate}
+                              max={todayInputValue()}
+                              onChange={(e) => setBalanceDate(e.target.value)}
+                              className="w-36 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-2 py-1 text-sm"
                             />
                             <button onClick={() => handleSaveBalance(account)} className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 transition-all duration-150 hover:scale-105 hover:bg-emerald-100">Save</button>
                             <button onClick={() => setEditingBalanceId(null)} className="text-xs font-medium text-gray-400 dark:text-gray-500 transition-colors duration-150 hover:text-gray-600 dark:hover:text-gray-300">Cancel</button>
@@ -586,6 +599,14 @@ export default function AccountsPage() {
                   placeholder="Notes (optional)"
                   value={transferForm.notes}
                   onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })}
+                  className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
+                />
+                <input
+                  type="date"
+                  title="When the transfer happened — pick an earlier date if you're recording it late"
+                  value={transferForm.occurredAt}
+                  max={todayInputValue()}
+                  onChange={(e) => setTransferForm({ ...transferForm, occurredAt: e.target.value })}
                   className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
                 />
 

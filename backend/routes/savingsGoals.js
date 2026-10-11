@@ -17,12 +17,12 @@ router.get('/', asyncHandler(async (req, res) => {
 }))
 
 router.post('/:id/contribute', asyncHandler(async (req, res) => {
-  const goal = await goalsService.contribute(req.userId, Number(req.params.id), req.body?.amount)
+  const goal = await goalsService.contribute(req.userId, Number(req.params.id), req.body?.amount, req.body?.date)
   res.json({ success: true, goal })
 }))
 
 router.post('/:id/withdraw', asyncHandler(async (req, res) => {
-  const goal = await goalsService.withdraw(req.userId, Number(req.params.id), req.body?.amount)
+  const goal = await goalsService.withdraw(req.userId, Number(req.params.id), req.body?.amount, req.body?.date)
   res.json({ success: true, goal })
 }))
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
+import { todayInputValue } from '@/lib/dates'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
@@ -52,6 +53,9 @@ export default function BillsPage() {
   const [editFormError, setEditFormError] = useState('')
 
   const [payingBill, setPayingBill] = useState(null)
+  // When the bill was actually paid — a payment recorded late still counts
+  // in the budget cycle it really happened in.
+  const [payDate, setPayDate] = useState('')
   const [cancellingBillId, setCancellingBillId] = useState(null)
 
   async function loadAll(all = showAll) {
@@ -161,7 +165,7 @@ export default function BillsPage() {
     setPayingBill(null)
     setActionError('')
     try {
-      await request(`/bills/${bill.id}/pay`, { method: 'POST' })
+      await request(`/bills/${bill.id}/pay`, { method: 'POST', body: JSON.stringify({ paidOn: payDate || undefined }) })
       loadAll()
     } catch (err) {
       setActionError(err.message || 'Failed to mark bill as paid')
@@ -228,7 +232,7 @@ export default function BillsPage() {
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-5">
             <input placeholder="Name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm" />
             <input
-              type="number"
+              type="number" step="any"
               placeholder={form.accountId ? `Amount (${accounts.find((a) => a.id === Number(form.accountId))?.currency})` : 'Amount'}
               required
               value={form.amount}
@@ -324,7 +328,7 @@ export default function BillsPage() {
                     <td className="space-x-1 px-5 py-3 text-right">
                       {bill.status !== 'paid' && bill.status !== 'cancelled' && (
                         <>
-                          <button onClick={() => setPayingBill(bill)} title="Mark as paid" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 hover:text-emerald-600 dark:hover:text-emerald-400">
+                          <button onClick={() => { setPayingBill(bill); setPayDate(todayInputValue()) }} title="Mark as paid" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 hover:text-emerald-600 dark:hover:text-emerald-400">
                             <CheckCircle size={17} />
                           </button>
                           <button onClick={() => startEdit(bill)} title="Edit" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300">
@@ -355,7 +359,7 @@ export default function BillsPage() {
             </div>
             <form onSubmit={handleEditSubmit} className="space-y-3">
               <input placeholder="Name" required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-              <input type="number" placeholder="Amount" required value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+              <input type="number" step="any" placeholder="Amount" required value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
               <input type="date" required value={editForm.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
               <select value={editForm.accountId} onChange={(e) => setEditForm({ ...editForm, accountId: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm">
                 <option value="">Account (needed to Pay)</option>
@@ -390,7 +394,18 @@ export default function BillsPage() {
         danger={false}
         onConfirm={confirmPay}
         onCancel={() => setPayingBill(null)}
-      />
+      >
+        <label className="block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+          Paid on
+          <input
+            type="date"
+            value={payDate}
+            max={todayInputValue()}
+            onChange={(e) => setPayDate(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm normal-case"
+          />
+        </label>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={!!cancellingBillId}
