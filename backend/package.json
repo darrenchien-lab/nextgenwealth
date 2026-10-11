@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
+    "dev": "node --watch-path=app.js --watch-path=server.js --watch-path=routes --watch-path=services --watch-path=shared --watch-path=middleware --watch-path=db --watch-path=jobs --watch-path=sql server.js",
     "setup-db": "node scripts/setup-db.js",
     "seed-demo": "node scripts/seed-demo.js",
     "setup-db:test": "node -r dotenv/config scripts/setup-db.js dotenv_config_path=.env.test",

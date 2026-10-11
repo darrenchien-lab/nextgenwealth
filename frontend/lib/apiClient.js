@@ -1,5 +1,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
 const TOKEN_KEY = 'financeflow_token'
+const NETWORK_RETRIES = 5
+const NETWORK_RETRY_DELAY_MS = 1500
 
 export function getToken() {
   if (typeof window === 'undefined') return null
@@ -33,14 +35,22 @@ export async function request(path, options = {}) {
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
+  // fetch only rejects when no response arrived at all — almost always the
+  // backend not running yet or briefly restarting. Reads are retried for a
+  // few seconds to ride that out; writes are not, since a write that did
+  // reach the server must never be sent twice.
+  const method = (options.method || 'GET').toUpperCase()
+  const attempts = method === 'GET' ? NETWORK_RETRIES + 1 : 1
   let response
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
-  } catch {
-    // fetch only rejects when no response arrived at all — almost always the
-    // backend not running (yet), which the browser reports as a bare
-    // "Failed to fetch". Say what's actually wrong instead.
-    throw new ApiError(`Can't reach the server at ${API_BASE_URL}. Make sure the backend is running, then refresh the page.`, 0, 'NETWORK_ERROR')
+  for (let attempt = 1; !response; attempt++) {
+    try {
+      response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
+    } catch {
+      if (attempt >= attempts) {
+        throw new ApiError(`Can't reach the server at ${API_BASE_URL}. Make sure the backend is running, then refresh the page.`, 0, 'NETWORK_ERROR')
+      }
+      await new Promise((resolve) => setTimeout(resolve, NETWORK_RETRY_DELAY_MS))
+    }
   }
 
   if (response.status === 401) {
