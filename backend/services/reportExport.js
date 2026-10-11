@@ -17,7 +17,7 @@ const generatePdfBuffer = (summary) =>
     doc.moveDown()
     doc.fontSize(12)
     Object.entries(summary).forEach(([key, value]) => {
-      doc.text(`${key}: ${value}`)
+      doc.text(`${key}: ${value ?? '-'}`)
     })
     doc.end()
   })
@@ -26,7 +26,7 @@ const generateExcelBuffer = async (summary) => {
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Report')
   sheet.columns = [{ header: 'Metric', key: 'metric', width: 30 }, { header: 'Value', key: 'value', width: 20 }]
-  Object.entries(summary).forEach(([key, value]) => sheet.addRow({ metric: key, value }))
+  Object.entries(summary).forEach(([key, value]) => sheet.addRow({ metric: key, value: value ?? '-' }))
   return workbook.xlsx.writeBuffer()
 }
 

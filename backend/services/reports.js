@@ -12,7 +12,8 @@ const SQL = {
   getNetWorthAsOf: loadSql('reports/getNetWorthAsOf'),
   insertNetWorthSnapshot: loadSql('reports/insertNetWorthSnapshot'),
   listAllUserIds: loadSql('reports/listAllUserIds'),
-  getNetWorthHistory: loadSql('reports/getNetWorthHistory')
+  getNetWorthHistory: loadSql('reports/getNetWorthHistory'),
+  listCarriedOverTransactions: loadSql('reports/listCarriedOverTransactions')
 }
 
 const getTotalBalance = async (userId, displayCurrency) => {
@@ -34,6 +35,11 @@ const computeFinancialHealthScore = (savingsRate) => {
   const score = 50 + savingsRate * 50
   return Math.max(0, Math.min(100, Math.round(score)))
 }
+
+// Share of income kept, in %; null (not 0%) when there was no income to keep.
+const savingsRateOf = ({ income, expense }) => (
+  income > 0 ? Math.round(((income - expense) / income) * 1000) / 10 : null
+)
 
 const pctChange = (from, to) => {
   if (!from) return null
@@ -57,6 +63,22 @@ const getNetWorthAsOf = async (userId, date, targetCurrency) => {
   if (!row) return null
   const { amount, available } = await currencyService.convertAmount(Number(row.net_worth), row.display_currency, targetCurrency)
   return available ? amount : null
+}
+
+// Net effect (income minus expense, in the display currency) of the
+// transactions that arrived before `boundary` but count in the cycle starting
+// there. Net worth follows real dates, so an early salary lifts the previous
+// cycle's net worth; subtracting this at each cycle edge moves it back into
+// the cycle it was budgeted for when comparing net worth cycle to cycle.
+const getCarriedOverAmount = async (userId, boundary, displayCurrency) => {
+  const result = await query(SQL.listCarriedOverTransactions, [userId, boundary])
+  let total = 0
+  for (const row of result.rows) {
+    const { amount, available } = await currencyService.convertAmount(Number(row.amount), row.currency, displayCurrency)
+    if (!available) continue
+    total += row.type === 'expense' ? -amount : amount
+  }
+  return total
 }
 
 // Income/expense default to the user's current budget cycle (a calendar
@@ -100,12 +122,15 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
       startDate: previousBounds.start.toISOString(),
       endDate: previousBounds.end.toISOString()
     })
-    const prevSavingsRate = previous.income > 0 ? Math.round(((previous.income - previous.expense) / previous.income) * 1000) / 10 : 0
+    const prevSavingsRate = savingsRateOf(previous)
     changes = {
       previous,
       prevSavingsRate,
-      prevFinancialHealthScore: computeFinancialHealthScore(prevSavingsRate / 100),
-      netWorthAtPeriodStart: await getNetWorthAsOf(userId, start, displayCurrency)
+      prevFinancialHealthScore: computeFinancialHealthScore((prevSavingsRate ?? 0) / 100),
+      netWorthAtPeriodStart: await getNetWorthAsOf(userId, start, displayCurrency),
+      carriedIntoPeriod: await getCarriedOverAmount(userId, start, displayCurrency),
+      // end is 23:59:59 the day before the next cycle starts.
+      carriedOutOfPeriod: await getCarriedOverAmount(userId, new Date(end.getTime() + 1000), displayCurrency)
     }
   }
 
@@ -121,8 +146,20 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
     ? (await getNetWorthAsOf(userId, end, displayCurrency)) ?? liveNetWorth.netWorth
     : liveNetWorth.netWorth
 
-  const savingsRate = income > 0 ? Math.round(((income - expense) / income) * 1000) / 10 : 0
-  const financialHealthScore = computeFinancialHealthScore(savingsRate / 100)
+  const savingsRate = savingsRateOf({ income, expense })
+  const financialHealthScore = computeFinancialHealthScore((savingsRate ?? 0) / 100)
+
+  // A cycle with nothing recorded yet (e.g. its first day) has nothing to
+  // compare, so income/expense/savings/health show no change rather than a
+  // misleading "-100%". Net worth still compares, since it never resets.
+  const periodIsEmpty = income === 0 && expense === 0
+
+  // The net worth change compares by budget cycle, not calendar date: money
+  // counted in a later cycle (see getCarriedOverAmount) is taken out of the
+  // cycle it physically arrived in. The netWorth figure itself stays real.
+  const netWorthChange = changes && changes.netWorthAtPeriodStart !== null
+    ? pctChange(changes.netWorthAtPeriodStart - changes.carriedIntoPeriod, netWorth - changes.carriedOutOfPeriod)
+    : null
 
   return {
     displayCurrency,
@@ -136,11 +173,15 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
     periodLabel,
     periodOffset: Number(periodOffset) === 1 ? 1 : 0,
     changes: changes && {
-      income: pctChange(changes.previous.income, income),
-      expense: pctChange(changes.previous.expense, expense),
-      savingsRate: pctChange(changes.prevSavingsRate, savingsRate),
-      financialHealthScore: pctChange(changes.prevFinancialHealthScore, financialHealthScore),
-      netWorth: changes.netWorthAtPeriodStart !== null ? pctChange(changes.netWorthAtPeriodStart, netWorth) : null
+      income: periodIsEmpty ? null : pctChange(changes.previous.income, income),
+      expense: periodIsEmpty ? null : pctChange(changes.previous.expense, expense),
+      // Savings rate is already a percentage, so its change is the difference
+      // in percentage points (47.8% → 100% is +52.2), not a percent of a percent.
+      savingsRate: periodIsEmpty || savingsRate === null || changes.prevSavingsRate === null
+        ? null
+        : Math.round((savingsRate - changes.prevSavingsRate) * 10) / 10,
+      financialHealthScore: periodIsEmpty ? null : pctChange(changes.prevFinancialHealthScore, financialHealthScore),
+      netWorth: netWorthChange
     },
     hasUnconverted: incomeUnconverted || balanceUnconverted || !liveNetWorth.fullyConverted
   }
@@ -161,7 +202,12 @@ const getTrends = async (userId, months) => aggregates.getMonthlyTrend(userId, m
 // no category), matching the granularity used by the Target Allocation
 // comparison instead of one combined "investments" group (design.md
 // Decision 2, superseded).
-const getAssetAllocation = async (userId) => {
+//
+// periodOffset 1 shows the allocation at the end of the previous budget
+// cycle instead of now: each account's balance as of that day (from its
+// statement) and each holding's last saved value by then.
+const getAssetAllocation = async (userId, { periodOffset } = {}) => {
+  if (Number(periodOffset) === 1) return getAssetAllocationAsOfLastCycle(userId)
   const displayCurrency = await accountsService.getDisplayCurrency(userId)
   const accounts = await accountsService.listAccounts(userId)
   const netWorthResult = await accountsService.getNetWorth(userId)
@@ -191,6 +237,27 @@ const getAssetAllocation = async (userId) => {
   }))
 
   return { displayCurrency, netWorth, allocation, hasUnconverted: hasUnconverted || !netWorthResult.fullyConverted }
+}
+
+const toDateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+const getAssetAllocationAsOfLastCycle = async (userId) => {
+  const displayCurrency = await accountsService.getDisplayCurrency(userId)
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const asOf = toDateKey(periods.getPeriodBoundsForOffset(cycleStartDay, 1).end)
+
+  const { values: totalsByType, hasUnconverted } = await investmentsService.getAllocationValuesAsOf(userId, asOf, displayCurrency)
+
+  const total = Array.from(totalsByType.values()).reduce((sum, v) => sum + v, 0)
+  const allocation = Array.from(totalsByType.entries())
+    .filter(([, amount]) => Math.abs(amount) >= 0.005)
+    .map(([type, amount]) => ({
+      type,
+      amount: Math.round(amount * 100) / 100,
+      percentage: total !== 0 ? Math.round((amount / total) * 1000) / 10 : 0
+    }))
+
+  return { displayCurrency, netWorth: Math.round(total * 100) / 100, allocation, asOf, hasUnconverted }
 }
 
 // Scheduled once daily (design.md Decision 3) — daily granularity is enough

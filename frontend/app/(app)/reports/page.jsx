@@ -4,7 +4,9 @@ import { useEffect, useState, useMemo } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Brush } from 'recharts'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber } from '@/lib/format'
-import { CHART_RANGES, applyChartRange, formatAxisDate } from '@/lib/chartRanges'
+import { CHART_RANGES, applyChartRange, formatAxisDate, withTimestamps } from '@/lib/chartRanges'
+import TrendAreaChart from '@/components/TrendAreaChart'
+import TargetAllocationCard from '@/components/TargetAllocationCard'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
 const PIE_OUTER_RADIUS = 80
@@ -126,6 +128,9 @@ export default function ReportsPage() {
   const filteredNetWorthHistory = useMemo(() => (
     applyChartRange(netWorthHistory, nwRange)
   ), [netWorthHistory, nwRange])
+  const netWorthTimeSeries = useMemo(() => (
+    filteredNetWorthHistory ? withTimestamps(filteredNetWorthHistory) : []
+  ), [filteredNetWorthHistory])
 
   useEffect(() => {
     async function load() {
@@ -148,6 +153,14 @@ export default function ReportsPage() {
     }
     load()
   }, [])
+
+  async function loadTargetAllocation(compareOffset) {
+    try {
+      setTargetAllocation(await request(`/investments/allocation-targets?compareOffset=${compareOffset}`))
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load allocation')
+    }
+  }
 
   async function handleExport(format) {
     setExportError('')
@@ -242,26 +255,7 @@ export default function ReportsPage() {
           )}
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Target vs Actual Allocation</h2>
-          {targetAllocation && targetAllocation.comparison.length > 0 ? (
-            <ResponsiveContainer width="100%" height={Math.max(180, targetAllocation.comparison.length * 56)}>
-              <BarChart data={targetAllocation.comparison} layout="vertical" margin={{ left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-                <XAxis type="number" unit="%" fontSize={12} />
-                <YAxis type="category" dataKey="assetName" width={110} fontSize={12} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => `${value}%`} />
-                <Legend />
-                <Bar dataKey="actualPercentage" name="Actual" fill="#10b981" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="targetPercentage" name="Target" fill="#94a3b8" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-64 items-center justify-center text-sm text-gray-400 dark:text-gray-500">
-              No allocation targets set yet — set them on the Goals page
-            </div>
-          )}
-        </div>
+        <TargetAllocationCard data={targetAllocation} onCompareChange={loadTargetAllocation} />
 
         <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -330,14 +324,14 @@ export default function ReportsPage() {
                       <Brush dataKey="date" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={formatAxisDate} travellerWidth={10} />
                     </BarChart>
                   ) : (
-                    <LineChart data={filteredNetWorthHistory} margin={{ top: 10, right: 16 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                      <XAxis dataKey="date" fontSize={12} tickFormatter={formatAxisDate} />
-                      <YAxis fontSize={12} domain={['auto', 'auto']} tickFormatter={formatNumber} width={130} />
-                      <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value, name, props) => formatCurrency(value, props.payload.displayCurrency)} />
-                      <Line type="monotone" dataKey="netWorth" stroke="#2563eb" name="Net Worth" dot={{ r: 3 }} isAnimationActive={false} />
-                      <Brush dataKey="date" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={formatAxisDate} travellerWidth={10} />
-                    </LineChart>
+                    <TrendAreaChart
+                      data={netWorthTimeSeries}
+                      dataKey="netWorth"
+                      name="Net Worth"
+                      height={380}
+                      formatValue={(value, row) => formatCurrency(value, row.displayCurrency)}
+                      formatAxisValue={formatNumber}
+                    />
                   )}
                 </ResponsiveContainer>
               ) : (

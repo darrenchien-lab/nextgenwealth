@@ -9,6 +9,8 @@ import { formatCurrency, formatNumber, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
 import HealthGauge from '@/components/HealthGauge'
 import CardHeader from '@/components/CardHeader'
+import ConfirmDialog from '@/components/ConfirmDialog'
+import { todayInputValue } from '@/lib/dates'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
 
@@ -37,6 +39,8 @@ export default function DashboardPage() {
   const [periodOffset, setPeriodOffset] = useState(0)
   const [hideAmounts, setHideAmounts] = useState(false)
   const [payError, setPayError] = useState('')
+  const [payingBill, setPayingBill] = useState(null)
+  const [payDate, setPayDate] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -46,7 +50,7 @@ export default function DashboardPage() {
         const [summaryData, trendsData, allocationData, billsData, goalsData, ratesData] = await Promise.all([
           request(`/reports/dashboard?periodOffset=${periodOffset}`),
           request('/reports/trends?months=6'),
-          request('/reports/asset-allocation'),
+          request(`/reports/asset-allocation?periodOffset=${periodOffset}`),
           request('/bills/upcoming'),
           request('/goals'),
           request('/accounts/exchange-rates')
@@ -67,14 +71,17 @@ export default function DashboardPage() {
     load()
   }, [periodOffset])
 
-  async function handlePayBill(bill) {
+  function handlePayBill(bill) {
     setPayError('')
-    const confirmed = window.confirm(
-      `Mark "${bill.name}" as paid?\n\nThis will record a ${formatCurrency(bill.amount, bill.currency || summary?.displayCurrency)} expense and deduct it from the linked account. This can't be undone from here.`
-    )
-    if (!confirmed) return
+    setPayingBill(bill)
+    setPayDate(todayInputValue())
+  }
+
+  async function confirmPayBill() {
+    const bill = payingBill
+    setPayingBill(null)
     try {
-      await request(`/bills/${bill.id}/pay`, { method: 'POST' })
+      await request(`/bills/${bill.id}/pay`, { method: 'POST', body: JSON.stringify({ paidOn: payDate || undefined }) })
       const billsData = await request('/bills/upcoming')
       setUpcomingBills(billsData.bills)
       setBillsTotal({ total: billsData.total, displayCurrency: billsData.displayCurrency })
@@ -177,7 +184,7 @@ export default function DashboardPage() {
         />
         <SummaryCard icon={TrendingUp} color="emerald" label="Income" value={formatCurrency(summary.income, currency)} hint={periodLabel} change={changes?.income} />
         <SummaryCard icon={TrendingDown} color="red" label="Expense" value={formatCurrency(summary.expense, currency)} hint={periodLabel} change={changes?.expense} />
-        <SummaryCard icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} change={changes?.savingsRate} />
+        <SummaryCard icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} change={changes?.savingsRate} changeUnit=" pts" />
         <SummaryCard
           icon={Landmark}
           color="violet"
@@ -337,7 +344,14 @@ export default function DashboardPage() {
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <CardHeader icon={PieIcon} color="amber" title="Asset Allocation" />
+          <CardHeader
+            icon={PieIcon}
+            color="amber"
+            title="Asset Allocation"
+            subtitle={allocation?.asOf
+              ? `As of ${new Date(`${allocation.asOf}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              : 'Now'}
+          />
           {allocation && allocation.allocation.length > 0 ? (
             <div className="flex items-center gap-3">
               <div className="h-24 w-24 shrink-0">
@@ -378,6 +392,27 @@ export default function DashboardPage() {
         </div>
       </div>
 
+
+      <ConfirmDialog
+        open={!!payingBill}
+        title={payingBill ? `Mark "${payingBill.name}" as paid?` : ''}
+        message={payingBill && `This will record a ${formatCurrency(payingBill.amount, payingBill.currency || summary?.displayCurrency)} expense and deduct it from the linked account. This can't be undone from here.`}
+        confirmLabel="Mark as paid"
+        danger={false}
+        onConfirm={confirmPayBill}
+        onCancel={() => setPayingBill(null)}
+      >
+        <label className="block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+          Paid on
+          <input
+            type="date"
+            value={payDate}
+            max={todayInputValue()}
+            onChange={(e) => setPayDate(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm normal-case"
+          />
+        </label>
+      </ConfirmDialog>
     </div>
   )
 }

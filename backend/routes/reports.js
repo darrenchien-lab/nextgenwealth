@@ -34,7 +34,7 @@ router.get('/trends', asyncHandler(async (req, res) => {
 }))
 
 router.get('/asset-allocation', asyncHandler(async (req, res) => {
-  const allocation = await reportsService.getAssetAllocation(req.userId)
+  const allocation = await reportsService.getAssetAllocation(req.userId, { periodOffset: req.query.periodOffset })
   res.json({ success: true, ...allocation })
 }))
 

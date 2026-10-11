@@ -14,7 +14,7 @@ const COLOR_STYLES = {
 // ~36px would push the value into an ellipsis. A small inline icon next to
 // the label keeps the visual cue without taking space from the number.
 export default function SummaryCard({
-  label, value, hint, icon: Icon, color = 'slate', change, children,
+  label, value, hint, icon: Icon, color = 'slate', change, changeUnit = '%', children,
   maskable = false, hidden = false, onToggleHidden
 }) {
   return (
@@ -49,7 +49,7 @@ export default function SummaryCard({
           {change !== undefined && change !== null && (
             <span className={`inline-flex shrink-0 items-center gap-0.5 text-xs font-medium ${change >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
               {change >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {Math.abs(change)}%
+              {Math.abs(change)}{changeUnit}
             </span>
           )}
         </div>
