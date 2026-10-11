@@ -26,3 +26,17 @@ test('budgets: the list defaults to the current budget cycle, not the calendar m
   assert.ok(res.body.periodLabel)
   assert.equal(res.body.budgets.length, 1)
 })
+
+test('budgets: an earlier cycle can be viewed by period, and the current cycle is always reported', async () => {
+  const { as } = await createTestUser()
+  const category = (await as.get('/categories')).body.categories[0]
+  await as.post('/budgets').send({ categoryId: category.id, period: '2026-01', limitAmount: 500000, currency: 'IDR' })
+
+  const res = await as.get('/budgets?period=2026-01')
+  assert.equal(res.status, 200)
+  assert.equal(res.body.period, '2026-01')
+  assert.equal(res.body.budgets.length, 1)
+  assert.equal(res.body.currentPeriod, periods.periodKeyForDate(1, new Date()))
+
+  assert.equal((await as.get('/budgets?period=2026-13')).status, 400)
+})

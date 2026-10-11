@@ -6,7 +6,7 @@ import { formatCurrency } from '@/lib/format'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
-import { Plus, SlidersHorizontal, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Pencil, Trash2, Receipt, X, TrendingUp, TrendingDown, Scale, Tag, Split, AlertTriangle } from 'lucide-react'
+import { Plus, SlidersHorizontal, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Pencil, Trash2, Receipt, X, TrendingUp, TrendingDown, Scale, Tag, Split, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const TYPES = ['income', 'expense']
 
@@ -77,7 +77,14 @@ function isWithinOneMonth(startDate, endDate) {
   return new Date(endDate) <= maxEnd
 }
 
-const emptyForm = () => ({ accountId: '', categoryId: '', type: 'expense', amount: '', occurredAt: toDateInputValue(), notes: '' })
+// 'YYYY-MM' cycle key shifted by whole months (cycles are one month long).
+function shiftPeriod(period, months) {
+  const [year, month] = period.split('-').map(Number)
+  const d = new Date(year, month - 1 + months, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+const emptyForm = () => ({ accountId: '', categoryId: '', type: 'expense', amount: '', occurredAt: toDateInputValue(), notes: '', countInNextCycle: false })
 
 // Grouped by currency (via each transaction's account) rather than summed
 // as one number — most users only ever see one group, but mixing two
@@ -102,6 +109,10 @@ export default function TransactionsPage() {
 
   const [filters, setFilters] = useState({ startDate: '', endDate: '', accountId: '', categoryId: '', type: '' })
   const [activeQuickRange, setActiveQuickRange] = useState(null)
+  // The list shows one budget cycle (the current one at first) unless a
+  // date range is picked; cycle holds the shown cycle's key and label.
+  const [period, setPeriod] = useState('current')
+  const [cycle, setCycle] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm())
   const [formError, setFormError] = useState('')
@@ -135,8 +146,10 @@ export default function TransactionsPage() {
   // which need to fetch with a range that hasn't landed in state yet) and
   // falls back to current state otherwise, so every other existing call
   // site (loadTransactions()) keeps working unchanged.
-  async function loadTransactions(overrideFilters) {
+  async function loadTransactions(overrideFilters, overridePeriod) {
     const activeFilters = overrideFilters || filters
+    const activePeriod = overridePeriod || period
+    const usesDates = Boolean(activeFilters.startDate || activeFilters.endDate)
     setFilterError('')
     if (activeFilters.startDate && activeFilters.endDate) {
       if (new Date(activeFilters.startDate) > new Date(activeFilters.endDate)) {
@@ -154,8 +167,10 @@ export default function TransactionsPage() {
       Object.entries(activeFilters).forEach(([key, value]) => {
         if (value) params.set(key, value)
       })
+      if (!usesDates) params.set('period', activePeriod)
       const data = await request(`/transactions?${params.toString()}`)
       setTransactions(data.transactions)
+      setCycle(usesDates ? null : { period: data.period, periodLabel: data.periodLabel, currentPeriod: data.currentPeriod })
     } catch (err) {
       setLoadError(err.message || 'Failed to load transactions')
     } finally {
@@ -173,6 +188,15 @@ export default function TransactionsPage() {
     setFilters(nextFilters)
     setActiveQuickRange(days)
     loadTransactions(nextFilters)
+  }
+
+  // Back to listing by budget cycle, dropping any picked date range.
+  function showCycle(nextPeriod) {
+    const nextFilters = { ...filters, startDate: '', endDate: '' }
+    setFilters(nextFilters)
+    setActiveQuickRange(null)
+    setPeriod(nextPeriod)
+    loadTransactions(nextFilters, nextPeriod)
   }
 
   useEffect(() => {
@@ -212,7 +236,8 @@ export default function TransactionsPage() {
         type: form.type,
         amount: Number(form.amount),
         occurredAt: form.occurredAt,
-        notes: form.notes || undefined
+        notes: form.notes || undefined,
+        countInNextCycle: form.countInNextCycle
       }
       await request('/transactions', { method: 'POST', body: JSON.stringify(payload) })
       resetForm()
@@ -232,7 +257,8 @@ export default function TransactionsPage() {
       type: txn.type,
       amount: String(txn.amount),
       occurredAt: toDateInputValue(txn.occurred_at),
-      notes: txn.notes || ''
+      notes: txn.notes || '',
+      countInNextCycle: Boolean(txn.cycle_date)
     })
     setEditFormError('')
   }
@@ -261,7 +287,8 @@ export default function TransactionsPage() {
         // undefined here would drop the key from the JSON body entirely,
         // which the backend reads as "leave the old notes alone" instead of
         // "the user cleared this."
-        notes: editForm.notes
+        notes: editForm.notes,
+        countInNextCycle: editForm.countInNextCycle
       }
       await request(`/transactions/${editingTxn.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
       closeEdit()
@@ -469,6 +496,18 @@ export default function TransactionsPage() {
             />
             <input type="date" required value={form.occurredAt} onChange={(e) => setForm({ ...form, occurredAt: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
             <input placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
+            <label className="col-span-full flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={form.countInNextCycle}
+                onChange={(e) => setForm({ ...form, countInNextCycle: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 dark:border-gray-600"
+              />
+              <span>
+                Count in next budget cycle
+                <span className="block text-xs text-gray-400 dark:text-gray-500">For money that arrives early, e.g. salary paid before the cycle starts. The date stays as it is for the account balance.</span>
+              </span>
+            </label>
 
             {showCategoryForm && (
               <div className="col-span-full flex items-center gap-2 rounded-lg bg-gray-50 dark:bg-gray-900/40 p-3">
@@ -504,9 +543,15 @@ export default function TransactionsPage() {
           icon={SlidersHorizontal}
           color="slate"
           title="Filters"
-          subtitle="Pick a date range of up to 1 month"
+          subtitle="One budget cycle, or a date range of up to 1 month"
           action={
             <div className="flex gap-1 rounded-full bg-gray-100 dark:bg-gray-700 p-1">
+              <button
+                onClick={() => showCycle('current')}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${cycle && cycle.period === cycle.currentPeriod ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+              >
+                This Cycle
+              </button>
               <button
                 onClick={() => applyQuickRange(7)}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition ${activeQuickRange === 7 ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
@@ -522,6 +567,27 @@ export default function TransactionsPage() {
             </div>
           }
         />
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          {cycle ? (
+            <>
+              <button onClick={() => showCycle(shiftPeriod(cycle.period, -1))} title="Previous cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <ChevronLeft size={16} />
+              </button>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{cycle.periodLabel}</span>
+              <button onClick={() => showCycle(shiftPeriod(cycle.period, 1))} title="Next cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <ChevronRight size={16} />
+              </button>
+              {cycle.period === cycle.currentPeriod
+                ? <span className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">Current cycle</span>
+                : <button onClick={() => showCycle('current')} className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">Back to current cycle</button>}
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-gray-700 dark:text-gray-300">Custom date range</span>
+              <button onClick={() => showCycle(period)} className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">Back to budget cycle</button>
+            </>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <input type="date" value={filters.startDate} onChange={(e) => { setFilters({ ...filters, startDate: e.target.value }); setActiveQuickRange(null) }} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
           <input type="date" value={filters.endDate} onChange={(e) => { setFilters({ ...filters, endDate: e.target.value }); setActiveQuickRange(null) }} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
@@ -574,7 +640,14 @@ export default function TransactionsPage() {
                 const isIncome = txn.type === 'income'
                 return (
                   <tr key={txn.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/60">
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{new Date(txn.occurred_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                      {new Date(txn.occurred_at).toLocaleDateString()}
+                      {txn.cycle_date && (
+                        <span title={`Counts in the budget cycle starting ${new Date(txn.cycle_date).toLocaleDateString()}`} className="mt-0.5 block w-fit rounded-full bg-violet-50 dark:bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
+                          → next cycle
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
                         isIncome ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400'
@@ -679,6 +752,18 @@ export default function TransactionsPage() {
               />
               <input type="date" required value={editForm.occurredAt} onChange={(e) => setEditForm({ ...editForm, occurredAt: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
               <input placeholder="Notes" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
+              <label className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={editForm.countInNextCycle}
+                onChange={(e) => setEditForm({ ...editForm, countInNextCycle: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 dark:border-gray-600"
+              />
+              <span>
+                Count in next budget cycle
+                <span className="block text-xs text-gray-400 dark:text-gray-500">For money that arrives early, e.g. salary paid before the cycle starts. The date stays as it is for the account balance.</span>
+              </span>
+            </label>
 
               {!editFormError && insufficientBalanceWarning && (
                 <p className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">

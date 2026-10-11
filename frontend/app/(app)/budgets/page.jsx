@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
-import { Pencil, Trash2, X } from 'lucide-react'
+import { Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+
+// 'YYYY-MM' cycle key shifted by whole months (cycles are one month long).
+function shiftPeriod(period, months) {
+  const [year, month] = period.split('-').map(Number)
+  const d = new Date(year, month - 1 + months, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
 
 // Plain-language stand-ins for the backend's literal validation wording,
 // same reasoning as the other pages' client-side validation.
@@ -26,7 +33,8 @@ export default function BudgetsPage() {
   // The current budget cycle comes from the server, which knows the user's
   // cycle start day — with a cutoff like the 10th, "now" can still belong to
   // last month's cycle, so the calendar month alone would be wrong.
-  const [cycle, setCycle] = useState({ period: '', periodLabel: '' })
+  // `period` is the cycle being shown; `currentPeriod` the one in progress.
+  const [cycle, setCycle] = useState({ period: '', periodLabel: '', currentPeriod: '' })
   const [form, setForm] = useState({ categoryId: '', period: '', limitAmount: '', currency: 'IDR' })
   const [formError, setFormError] = useState('')
   const [showCategoryForm, setShowCategoryForm] = useState(false)
@@ -40,23 +48,24 @@ export default function BudgetsPage() {
   const [deletingBudget, setDeletingBudget] = useState(null)
   const [actionError, setActionError] = useState('')
 
-  async function loadAll() {
+  // Loads the given cycle (or the current one when none is given).
+  async function loadAll(period) {
     setLoading(true)
     try {
       const [categoriesData, budgetsData, currencyData, supportedData] = await Promise.all([
         request('/categories'),
-        request('/budgets'),
+        request(period ? `/budgets?period=${period}` : '/budgets'),
         request('/accounts/display-currency'),
         request('/accounts/supported-currencies')
       ])
       setCategories(categoriesData.categories)
       setBudgets(budgetsData.budgets)
-      setCycle({ period: budgetsData.period, periodLabel: budgetsData.periodLabel })
+      setCycle({ period: budgetsData.period, periodLabel: budgetsData.periodLabel, currentPeriod: budgetsData.currentPeriod })
       setCurrencies(supportedData.currencies)
       // Just a sensible starting point for the create form — the user can
       // still pick any other currency from the dropdown, independent of
       // this setting.
-      setForm((f) => ({ ...f, period: f.period || budgetsData.period, currency: currencyData.displayCurrency }))
+      setForm((f) => ({ ...f, period: budgetsData.period, currency: currencyData.displayCurrency }))
     } catch (err) {
       setLoadError(err.message || 'Failed to load budgets')
     } finally {
@@ -100,7 +109,7 @@ export default function BudgetsPage() {
       })
       setForm((f) => ({ categoryId: '', period: cycle.period, limitAmount: '', currency: f.currency }))
       setShowForm(false)
-      loadAll()
+      loadAll(cycle.period)
     } catch (err) {
       setFormError(err.message || 'Failed to create budget')
     }
@@ -157,7 +166,7 @@ export default function BudgetsPage() {
         })
       })
       closeEdit()
-      loadAll()
+      loadAll(cycle.period)
     } catch (err) {
       setEditFormError(err.message || 'Failed to update budget')
     }
@@ -168,7 +177,7 @@ export default function BudgetsPage() {
     try {
       await request(`/budgets/${deletingBudget.id}`, { method: 'DELETE' })
       setDeletingBudget(null)
-      loadAll()
+      loadAll(cycle.period)
     } catch (err) {
       setActionError(err.message || 'Failed to delete budget')
       setDeletingBudget(null)
@@ -180,7 +189,20 @@ export default function BudgetsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Budgets</h1>
-          {cycle.periodLabel && <p className="text-sm text-gray-500 dark:text-gray-400">Current cycle: {cycle.periodLabel}</p>}
+          {cycle.periodLabel && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <button onClick={() => loadAll(shiftPeriod(cycle.period, -1))} title="Previous cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <ChevronLeft size={16} />
+              </button>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{cycle.periodLabel}</span>
+              <button onClick={() => loadAll(shiftPeriod(cycle.period, 1))} title="Next cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <ChevronRight size={16} />
+              </button>
+              {cycle.period === cycle.currentPeriod
+                ? <span className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">Current cycle</span>
+                : <button onClick={() => loadAll()} className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">Back to current cycle</button>}
+            </div>
+          )}
         </div>
         <button onClick={() => setShowForm((v) => !v)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md">
           {showForm ? 'Cancel' : '+ New Budget'}
@@ -204,7 +226,7 @@ export default function BudgetsPage() {
             </button>
           </div>
           <input type="month" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-          <input type="number" placeholder="Limit amount" value={form.limitAmount} onChange={(e) => setForm({ ...form, limitAmount: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+          <input type="number" step="any" placeholder="Limit amount" value={form.limitAmount} onChange={(e) => setForm({ ...form, limitAmount: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
           <select
             value={form.currency}
             onChange={(e) => setForm({ ...form, currency: e.target.value })}
@@ -287,7 +309,7 @@ export default function BudgetsPage() {
               </select>
               <input type="month" value={editForm.period} onChange={(e) => setEditForm({ ...editForm, period: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
               <div className="flex gap-2">
-                <input type="number" placeholder="Limit amount" value={editForm.limitAmount} onChange={(e) => setEditForm({ ...editForm, limitAmount: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                <input type="number" step="any" placeholder="Limit amount" value={editForm.limitAmount} onChange={(e) => setEditForm({ ...editForm, limitAmount: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
                 <select
                   value={editForm.currency}
                   onChange={(e) => setEditForm({ ...editForm, currency: e.target.value })}

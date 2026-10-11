@@ -5,6 +5,9 @@ const accountsService = require('../services/accounts')
 const periods = require('./periods')
 const { badRequest } = require('./utils')
 
+// Transactions are placed in a period by COALESCE(t.cycle_date, t.occurred_at):
+// the real date, unless the transaction was set to count in the next cycle.
+//
 // Every transaction's amount is in its own account's currency. All
 // aggregates below convert each row into the user's display currency before
 // summing, per the `reports` spec's Multi-Currency Aggregation requirement.
@@ -47,8 +50,8 @@ const getIncomeExpense = async (userId, { startDate, endDate }) => {
      FROM transactions t
      JOIN accounts a ON a.id = t.account_id
      WHERE t.user_id = $1
-       AND ($2::timestamp IS NULL OR t.occurred_at >= $2)
-       AND ($3::timestamp IS NULL OR t.occurred_at <= $3)`,
+       AND ($2::timestamp IS NULL OR COALESCE(t.cycle_date, t.occurred_at) >= $2)
+       AND ($3::timestamp IS NULL OR COALESCE(t.cycle_date, t.occurred_at) <= $3)`,
     [userId, startDate || null, endDate || null]
   )
 
@@ -101,8 +104,8 @@ const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId } = 
      JOIN accounts a ON a.id = t.account_id
      LEFT JOIN categories c ON c.id = t.category_id
      WHERE t.user_id = $1 AND t.type = 'expense'
-       AND ($2::timestamp IS NULL OR t.occurred_at >= $2)
-       AND ($3::timestamp IS NULL OR t.occurred_at <= $3)
+       AND ($2::timestamp IS NULL OR COALESCE(t.cycle_date, t.occurred_at) >= $2)
+       AND ($3::timestamp IS NULL OR COALESCE(t.cycle_date, t.occurred_at) <= $3)
        ${categoryFilter}`,
     params
   )
@@ -171,7 +174,7 @@ const getSpentForCategoryPeriod = async (userId, categoryId, period, targetCurre
      FROM transactions t
      JOIN accounts a ON a.id = t.account_id
      WHERE t.user_id = $1 AND t.category_id = $2 AND t.type = 'expense'
-       AND t.occurred_at >= $3 AND t.occurred_at <= $4`,
+       AND COALESCE(t.cycle_date, t.occurred_at) >= $3 AND COALESCE(t.cycle_date, t.occurred_at) <= $4`,
     [userId, categoryId, start.toISOString(), end.toISOString()]
   )
 

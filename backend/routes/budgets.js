@@ -12,9 +12,12 @@ router.post('/', asyncHandler(async (req, res) => {
 }))
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { period, periodLabel } = await budgetsService.describePeriod(req.userId, req.query.period)
+  // currentPeriod lets the page tell whether it is showing the cycle in
+  // progress or browsing an earlier/later one.
+  const current = await budgetsService.describePeriod(req.userId)
+  const { period, periodLabel } = req.query.period ? await budgetsService.describePeriod(req.userId, req.query.period) : current
   const budgets = await budgetsService.listBudgetsWithUsage(req.userId, period)
-  res.json({ success: true, period, periodLabel, budgets })
+  res.json({ success: true, period, periodLabel, currentPeriod: current.period, budgets })
 }))
 
 router.get('/:id/forecast', asyncHandler(async (req, res) => {

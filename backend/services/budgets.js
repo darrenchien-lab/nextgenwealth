@@ -92,6 +92,7 @@ const deleteBudget = async (userId, id) => {
 // can't work this out from the calendar alone, since it depends on the
 // user's cycle start day.
 const describePeriod = async (userId, period) => {
+  if (period && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw badRequest('period must be in YYYY-MM format')
   const cycleStartDay = await accountsService.getCycleStartDay(userId)
   const key = period || periods.periodKeyForDate(cycleStartDay, new Date())
   const { start, end } = periods.periodKeyToBounds(cycleStartDay, key)
