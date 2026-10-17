@@ -16,12 +16,16 @@ export const OTHER_LABEL = 'Other'
 // single gray "Other" slice instead of reusing a color. Colors are handed
 // out in alphabetical order of the slice names (the order the legend lists
 // them in), so a slice keeps its color however the data happens to be sorted.
+// A real slice already called "Other" (e.g. a user's own "Other" category)
+// goes into the folded one, so there's never two slices with that name.
 export function withDistinctColors(rows, { nameKey, valueKey = 'amount', theme = 'light' }) {
   const palette = CATEGORY_COLORS[theme]
   let slices = rows
 
   if (rows.length > palette.length) {
-    const bySize = [...rows].sort((a, b) => Number(b[valueKey]) - Number(a[valueKey]))
+    const bySize = [...rows]
+      .filter((r) => String(r[nameKey]) !== OTHER_LABEL)
+      .sort((a, b) => Number(b[valueKey]) - Number(a[valueKey]))
     const kept = new Set(bySize.slice(0, palette.length - 1))
     const folded = rows.filter((r) => !kept.has(r))
     slices = [

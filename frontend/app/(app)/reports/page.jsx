@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Brush } from 'recharts'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber } from '@/lib/format'
-import { CHART_RANGES, applyChartRange, formatAxisDate, withTimestamps } from '@/lib/chartRanges'
+import { CHART_RANGES, applyChartRange, historyInRange, formatAxisDate, withTimestamps } from '@/lib/chartRanges'
 import TrendAreaChart from '@/components/TrendAreaChart'
 import TargetAllocationCard from '@/components/TargetAllocationCard'
 import CycleCompareCard from '@/components/CycleCompareCard'
@@ -34,20 +34,23 @@ function pctChange(from, to) {
   return Math.round(((to - from) / from) * 1000) / 10
 }
 
-// "This Cycle" is not computed here: it comes from the dashboard summary, so
-// it follows the budget cycle (and salary counted in the next cycle) exactly
-// like the Dashboard's net worth change does.
-function computeSummaryChanges(history) {
-  if (!history || history.length === 0) return null
-  const latest = history[history.length - 1]
-  const now = new Date()
-  const startOfYear = new Date(now.getFullYear(), 0, 1)
-
+// The change across whichever range the chart shows, measured from the
+// range's first daily point to its last (not the monthly-aggregated chart
+// points, so "All" really starts at the first snapshot).
+function computeRangeChange(history, rangeLabel) {
+  const points = historyInRange(history, rangeLabel)
+  if (!points || points.length < 2) return null
+  const start = points[0]
+  const end = points[points.length - 1]
   return {
-    thisYear: pctChange(closestOnOrBefore(history, startOfYear).netWorth, latest.netWorth),
-    allTime: pctChange(history[0].netWorth, latest.netWorth)
+    start,
+    end,
+    amount: end.netWorth - start.netWorth,
+    percent: pctChange(start.netWorth, end.netWorth)
   }
 }
+
+const formatDay = (key) => new Date(`${key}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
 // One row per calendar month, keeping that month's last snapshot as its
 // value (history is already ordered oldest to newest) — mirrors the "Log
@@ -73,13 +76,27 @@ function computeMonthlyBreakdown(history) {
   })
 }
 
-function SummaryChangeCard({ label, value }) {
+function RangeCards({ change, rangeLabel, currency }) {
+  const tone = change.amount >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+  const box = 'rounded-xl bg-gray-50 p-3 text-center dark:bg-gray-900/40'
+  const label = 'text-xs uppercase text-gray-500 dark:text-gray-400'
   return (
-    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 p-3 text-center">
-      <p className="text-xs uppercase text-gray-500 dark:text-gray-400">{label}</p>
-      <p className={`mt-1 text-lg font-semibold ${value === null ? 'text-gray-400 dark:text-gray-500' : value >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-        {value === null ? 'N/A' : `${value >= 0 ? '+' : ''}${value}%`}
-      </p>
+    <div className="mb-4 grid grid-cols-3 gap-3">
+      <div className={box}>
+        <p className={label}>Change ({rangeLabel === 'All' ? 'all time' : rangeLabel})</p>
+        <p className={`mt-1 text-lg font-semibold ${tone}`}>{change.percent === null ? 'N/A' : `${change.percent >= 0 ? '+' : ''}${change.percent}%`}</p>
+        <p className={`text-xs ${tone}`}>{change.amount >= 0 ? '+' : '−'}{formatCurrency(Math.abs(change.amount), currency)}</p>
+      </div>
+      <div className={box}>
+        <p className={label}>Start</p>
+        <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(change.start.netWorth, currency)}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{formatDay(change.start.date)}</p>
+      </div>
+      <div className={box}>
+        <p className={label}>Now</p>
+        <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(change.end.netWorth, currency)}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{formatDay(change.end.date)}</p>
+      </div>
     </div>
   )
 }
@@ -87,7 +104,6 @@ function SummaryChangeCard({ label, value }) {
 export default function ReportsPage() {
   const [netWorthHistory, setNetWorthHistory] = useState(null)
   const [targetAllocation, setTargetAllocation] = useState(null)
-  const [cycleSummary, setCycleSummary] = useState(null)
   const [nwRange, setNwRange] = useState('All')
   const [chartType, setChartType] = useState('line')
   const [showMonthlyDetail, setShowMonthlyDetail] = useState(false)
@@ -99,6 +115,7 @@ export default function ReportsPage() {
   const filteredNetWorthHistory = useMemo(() => (
     applyChartRange(netWorthHistory, nwRange)
   ), [netWorthHistory, nwRange])
+  const rangeChange = useMemo(() => computeRangeChange(netWorthHistory, nwRange), [netWorthHistory, nwRange])
   const netWorthTimeSeries = useMemo(() => (
     filteredNetWorthHistory ? withTimestamps(filteredNetWorthHistory) : []
   ), [filteredNetWorthHistory])
@@ -106,12 +123,10 @@ export default function ReportsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [historyData, targetData, summaryData] = await Promise.all([
+        const [historyData, targetData] = await Promise.all([
           request('/reports/net-worth-history'),
-          request('/investments/allocation-targets'),
-          request('/reports/dashboard')
+          request('/investments/allocation-targets')
         ])
-        setCycleSummary(summaryData)
         setNetWorthHistory(historyData.history)
         setTargetAllocation(targetData)
       } catch (err) {
@@ -220,15 +235,7 @@ export default function ReportsPage() {
 
           {netWorthHistory && netWorthHistory.length > 1 ? (
             <>
-              <div className="mb-4 grid grid-cols-3 gap-3">
-                <SummaryChangeCard label="This Cycle" value={cycleSummary?.changes?.netWorth ?? null} />
-                <SummaryChangeCard label="This Year" value={computeSummaryChanges(netWorthHistory).thisYear} />
-                <SummaryChangeCard label="All-Time" value={computeSummaryChanges(netWorthHistory).allTime} />
-              </div>
-
-              <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">
-                {filteredNetWorthHistory.length} data points · {filteredNetWorthHistory[0]?.date} – {filteredNetWorthHistory[filteredNetWorthHistory.length - 1]?.date}
-              </p>
+              {rangeChange && <RangeCards change={rangeChange} rangeLabel={nwRange} currency={rangeChange.end.displayCurrency} />}
 
               {filteredNetWorthHistory.length > 1 ? (
                 // Brush (Recharts' built-in zoom/pan slider) replaces the old

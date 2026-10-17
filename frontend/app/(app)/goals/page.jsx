@@ -112,7 +112,6 @@ export default function GoalsPage() {
   const [goals, setGoals] = useState([])
   const [accounts, setAccounts] = useState([])
   const [holdings, setHoldings] = useState([])
-  const [suggestions, setSuggestions] = useState(null)
   const [displayCurrency, setDisplayCurrency] = useState('IDR')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -140,7 +139,6 @@ export default function GoalsPage() {
       loadGoals()
       request('/accounts').then((d) => setAccounts(d.accounts)).catch(() => {})
       request('/investments/portfolio').then((d) => { setHoldings(d.holdings); setDisplayCurrency(d.displayCurrency || 'IDR') }).catch(() => {})
-      request('/goals/suggestions').then(setSuggestions).catch(() => {})
     }
     init()
   }, [])
@@ -231,7 +229,6 @@ export default function GoalsPage() {
     }
   }
 
-  const emergencyTarget = suggestions?.averageMonthlyExpense ? Math.round(suggestions.averageMonthlyExpense * 6) : null
 
   return (
     <div className="space-y-6">
@@ -300,16 +297,9 @@ export default function GoalsPage() {
                 </select>
               </label>
             </div>
-            {emergencyTarget && (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, targetAmount: String(emergencyTarget), currency: suggestions.displayCurrency })}
-                className="-mt-2 text-left text-xs text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                Emergency fund? Use 6 months of your spending: {formatCurrency(emergencyTarget, suggestions.displayCurrency)}
-                <span className="text-gray-400 dark:text-gray-500"> (average {formatCurrency(suggestions.averageMonthlyExpense, suggestions.displayCurrency)}/cycle over the last {suggestions.cyclesCounted})</span>
-              </button>
-            )}
+            <p className="-mt-2 text-xs text-gray-400 dark:text-gray-500">
+              Emergency fund? A common rule is 3–6 months of your expenses.
+            </p>
 
             <label className="block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
               Target date <span className="normal-case text-gray-400">(optional — needed to know how much to save each month)</span>

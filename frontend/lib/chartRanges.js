@@ -16,6 +16,7 @@ export const CHART_RANGES = [
   { label: '1M', days: 30, aggregate: 'day' },
   { label: '3M', days: 90, aggregate: 'day' },
   { label: '6M', days: 180, aggregate: 'day' },
+  { label: 'YTD', ytd: true, aggregate: 'month' },
   { label: '1Y', days: 365, aggregate: 'month' },
   { label: '5Y', days: 365 * 5, aggregate: 'month' },
   { label: 'All', days: Infinity, aggregate: 'month' }
@@ -30,6 +31,23 @@ export function filterHistoryByRange(history, days) {
   cutoff.setDate(cutoff.getDate() - (days - 1))
   const cutoffStr = cutoff.toISOString().slice(0, 10)
   return history.filter((h) => h.date >= cutoffStr)
+}
+
+// The daily points inside a range, before any monthly aggregation — what a
+// change over the range is measured on. YTD starts from the last point
+// before 1 January of the latest point's year (the year's closing value, as
+// banks and brokers measure it), so a change on 1 January itself counts and
+// the range has two points from the first day of the year.
+export function historyInRange(history, rangeLabel) {
+  if (!history) return history
+  const range = CHART_RANGES.find((r) => r.label === rangeLabel)
+  if (range?.ytd) {
+    if (history.length === 0) return history
+    const yearStart = `${history[history.length - 1].date.slice(0, 4)}-01-01`
+    const firstIndex = history.findIndex((h) => h.date >= yearStart)
+    return firstIndex > 0 ? history.slice(firstIndex - 1) : history.filter((h) => h.date >= yearStart)
+  }
+  return filterHistoryByRange(history, range?.days ?? Infinity)
 }
 
 // One point per calendar month, keeping each field's last known value that
@@ -66,7 +84,7 @@ export function aggregateMonthly(history) {
 export function applyChartRange(history, rangeLabel) {
   if (!history) return history
   const range = CHART_RANGES.find((r) => r.label === rangeLabel)
-  const windowed = filterHistoryByRange(history, range?.days ?? Infinity)
+  const windowed = historyInRange(history, rangeLabel)
   if (range?.aggregate !== 'month') return windowed
   const aggregated = aggregateMonthly(windowed)
   return aggregated.length > 1 ? aggregated : windowed
