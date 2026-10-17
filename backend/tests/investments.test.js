@@ -122,3 +122,45 @@ test('investments: value history can be shown for one holding, and only for your
   assert.equal((await other.as.get(`/investments/history?holdingId=${a.id}`)).status, 404)
   assert.equal((await as.get('/investments/history?holdingId=abc')).status, 400)
 })
+
+test('investments: the capital line is rebuilt from trades back to the first purchase when they cover the whole holding', async () => {
+  const { user, as } = await createTestUser()
+  const { pool } = require('./helpers')
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const holding = (await as.post('/investments').send({ assetName: 'OLD', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 100000, price: 1000 })).body.holding
+  // The purchase happened long before the reliable cost snapshots began, and
+  // there's an old daily value from then.
+  await pool.query("UPDATE investment_transactions SET occurred_at = '2025-03-01 12:00:00' WHERE holding_id = $1", [holding.id])
+  await pool.query(
+    "INSERT INTO investment_holding_snapshots (user_id, holding_id, snapshot_date, asset_name, value, cost_basis, display_currency) VALUES ($1, $2, '2025-04-01', 'OLD', 120000, 999999, 'IDR'), ($1, $2, '2025-02-01', 'OLD', 1, 1, 'IDR')",
+    [user.id, holding.id]
+  )
+  const history = (await as.get(`/investments/history?holdingId=${holding.id}`)).body.history
+  const byDate = Object.fromEntries(history.map((h) => [h.date, h.totalCostBasis]))
+  assert.equal(byDate['2025-04-01'], 100000) // from the trade, not the snapshot's placeholder
+  assert.equal(byDate['2025-02-01'], null) // before the first purchase
+
+  // A holding whose trades don't cover it keeps the old behaviour (no line before reliable snapshots).
+  await as.post(`/investments/${holding.id}/add`).send({ quantity: 10, totalSpent: 10000, price: 1000, accountId: undefined })
+  await pool.query('UPDATE investment_holdings SET quantity = quantity + 5 WHERE id = $1', [holding.id])
+  const partial = (await as.get(`/investments/history?holdingId=${holding.id}`)).body.history
+  assert.equal(partial.find((h) => h.date === '2025-04-01').totalCostBasis, null)
+})
+
+test('investments: the actual return counts each purchase from its own date (XIRR)', async () => {
+  const { as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const yearAgo = new Date(Date.now() - 365.25 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const holding = (await as.post('/investments').send({
+    assetName: 'XIRR', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 1000000, price: 10000, purchasedAt: yearAgo
+  })).body.holding
+  await as.patch(`/investments/${holding.id}/price`).send({ currentPrice: 11000 })
+  let res = (await as.get('/investments/allocation-targets')).body
+  assert.equal(res.actualXirr.available, true)
+  assert.ok(Math.abs(res.actualXirr.xirr - 10) < 0.2, `expected about 10%, got ${res.actualXirr.xirr}`)
+
+  // A big top-up today barely changes the yearly rate: that money hasn't had time to grow yet.
+  await as.post(`/investments/${holding.id}/add`).send({ quantity: 100, totalSpent: 1100000 })
+  res = (await as.get('/investments/allocation-targets')).body
+  assert.ok(Math.abs(res.actualXirr.xirr - 10) < 0.5, `expected about 10%, got ${res.actualXirr.xirr}`)
+})

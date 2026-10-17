@@ -56,6 +56,8 @@ const SQL = {
   insertOrUpdateSnapshot: loadSql('investments/insertOrUpdateSnapshot'),
   getHistory: loadSql('investments/getHistory'),
   getHoldingHistory: loadSql('investments/getHoldingHistory'),
+  listTradesForCost: loadSql('investments/listTradesForCost'),
+  listHoldingsForCost: loadSql('investments/listHoldingsForCost'),
   listAllUserIds: loadSql('investments/listAllUserIds'),
   insertOrUpdateHoldingSnapshot: loadSql('investments/insertOrUpdateHoldingSnapshot'),
   getHoldingsHistory: loadSql('investments/getHoldingsHistory'),
@@ -462,6 +464,79 @@ const getPortfolioCagr = async (userId) => {
   }
 }
 
+// The annual rate r at which every dated cash flow (negative = money put in,
+// positive = money taken out or still held) discounts to zero — XIRR, as in
+// a spreadsheet. Solved by bisection, which can't diverge the way Newton can
+// when returns are extreme over a short period.
+const solveXirr = (flows) => {
+  const t0 = flows[0].time
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000
+  const npv = (rate) => flows.reduce((sum, f) => sum + f.amount / Math.pow(1 + rate, (f.time - t0) / msPerYear), 0)
+  let low = -0.9999
+  let high = 10
+  if (npv(low) * npv(high) > 0) return null
+  for (let i = 0; i < 200; i += 1) {
+    const mid = (low + high) / 2
+    if (npv(low) * npv(mid) <= 0) high = mid
+    else low = mid
+  }
+  return (low + high) / 2
+}
+
+// The portfolio's money-weighted annual return (XIRR): each recorded buy is
+// money in on its own date, each sell money out, and today's value is what
+// would come out now. Unlike getPortfolioCagr, a top-up only counts from the
+// day it was made. Needs every holding's trades to account for all of it.
+// Trades from before the saved rate history began are converted at today's
+// rate.
+const getPortfolioXirr = async (userId) => {
+  const portfolio = await getPortfolio(userId)
+  const displayCurrency = portfolio.displayCurrency
+  const holdings = (await query(SQL.listHoldingsForCost, [userId])).rows
+  const trades = (await query(SQL.listTradesForCost, [userId])).rows
+  for (const holding of holdings) {
+    let quantity = 0
+    let count = 0
+    for (const t of trades) {
+      if (t.holding_id !== holding.id) continue
+      quantity += t.type === 'buy' ? Number(t.quantity) : -Number(t.quantity)
+      count += 1
+    }
+    if (count === 0 && holding.is_closed) continue
+    const expected = holding.is_closed ? 0 : Number(holding.quantity)
+    if (Math.abs(quantity - expected) > 1e-8) {
+      return { available: false, reason: 'Some holdings are missing part of their buy/sell history' }
+    }
+  }
+  if (trades.length === 0) return { available: false, reason: 'No recorded buys yet' }
+  if (portfolio.holdings.some((h) => h.currentValue === null)) {
+    return { available: false, reason: 'Some holdings have no value in the display currency' }
+  }
+
+  const currencyOf = new Map(holdings.map((h) => [h.id, h.currency]))
+  const flows = []
+  for (const t of trades) {
+    const currency = currencyOf.get(t.holding_id)
+    let converted = await currencyService.convertAmountAsOf(Number(t.total_amount), currency, displayCurrency, t.trade_date)
+    if (!converted.available) converted = await currencyService.convertAmount(Number(t.total_amount), currency, displayCurrency)
+    if (!converted.available) return { available: false, reason: `No exchange rate from ${currency}` }
+    flows.push({ time: new Date(`${t.trade_date}T00:00:00Z`).getTime(), amount: t.type === 'buy' ? -converted.amount : converted.amount })
+  }
+  flows.push({ time: Date.now(), amount: portfolio.totalValue })
+
+  const rate = solveXirr(flows)
+  if (rate === null) return { available: false, reason: 'Return could not be worked out from these trades' }
+  // Gain/loss on what the current holdings cost, as the holdings list shows it.
+  const costBasis = portfolio.holdings.reduce((sum, h) => sum + (h.currentValue - h.unrealizedGain), 0)
+  return {
+    available: true,
+    xirr: Math.round(rate * 1000) / 10,
+    gainLoss: costBasis > 0 ? Math.round((portfolio.totalValue / costBasis - 1) * 1000) / 10 : null,
+    displayCurrency,
+    firstTradeDate: trades[0].trade_date
+  }
+}
+
 const setAllocationTargets = async (userId, targets, targetCagr) => {
   if (!Array.isArray(targets) || targets.length === 0) throw badRequest('targets must be a non-empty array')
   for (const t of targets) {
@@ -629,7 +704,7 @@ const getAllocationComparison = async (userId, { compareOffset } = {}) => {
     ? Number(userResult.rows[0].target_cagr)
     : null
 
-  const actualCagr = await getPortfolioCagr(userId)
+  const [actualCagr, actualXirr] = await Promise.all([getPortfolioCagr(userId), getPortfolioXirr(userId)])
 
   return {
     displayCurrency: portfolio.displayCurrency,
@@ -639,7 +714,8 @@ const getAllocationComparison = async (userId, { compareOffset } = {}) => {
     compareWith,
     compareOptions,
     targetCagr,
-    actualCagr
+    actualCagr,
+    actualXirr
   }
 }
 
@@ -702,6 +778,71 @@ const catchUpAllUsersSnapshots = async () => {
 // which the spreadsheet genuinely recorded, is unaffected.
 const RELIABLE_COST_BASIS_START_DATE = '2026-09-15'
 
+// Cost basis on any past date, rebuilt from the recorded buys and sells
+// (average cost: a sale removes its share of the cost). Only possible when a
+// holding's trades account for all of it — the units they add up to match
+// what's held now (or zero for a closed holding). Returns a function from a
+// 'YYYY-MM-DD' date to the cost in the display currency then, or null when
+// any holding in scope isn't fully covered by its trades.
+const tradeCostSeries = async (userId, displayCurrency, holdingId = null) => {
+  const holdings = (await query(SQL.listHoldingsForCost, [userId])).rows
+    .filter((h) => holdingId === null || h.id === holdingId)
+  const trades = (await query(SQL.listTradesForCost, [userId])).rows
+  const series = []
+  for (const holding of holdings) {
+    let quantity = 0
+    let cost = 0
+    const steps = []
+    for (const t of trades) {
+      if (t.holding_id !== holding.id) continue
+      const q = Number(t.quantity)
+      if (t.type === 'buy') {
+        quantity += q
+        cost += Number(t.total_amount)
+      } else if (quantity > 0) {
+        cost -= (cost / quantity) * q
+        quantity -= q
+      }
+      steps.push({ date: t.trade_date, cost })
+    }
+    // A closed holding with no trades never had a known cost to chart.
+    if (steps.length === 0 && holding.is_closed) continue
+    const expected = holding.is_closed ? 0 : Number(holding.quantity)
+    if (Math.abs(quantity - expected) > 1e-8) return null
+    series.push({ currency: holding.currency, steps })
+  }
+
+  // Exchange rates per day, from the saved rate history where it reaches.
+  const rates = new Map()
+  const rateOn = async (currency, date) => {
+    if (currency === displayCurrency) return 1
+    const key = `${currency}:${date}`
+    if (!rates.has(key)) {
+      const then = await currencyService.convertAmountAsOf(1_000_000, currency, displayCurrency, date)
+      const converted = then.available ? then : await currencyService.convertAmount(1_000_000, currency, displayCurrency)
+      rates.set(key, converted.available ? converted.amount / 1_000_000 : null)
+    }
+    return rates.get(key)
+  }
+
+  return async (date) => {
+    let total = 0
+    for (const { currency, steps } of series) {
+      let cost = 0
+      for (const step of steps) {
+        if (step.date > date) break
+        cost = step.cost
+      }
+      if (cost === 0) continue
+      const rate = await rateOn(currency, date)
+      if (rate === null) return null
+      total += cost * rate
+    }
+    // Before the first purchase there's no cost to draw, rather than a 0.
+    return total === 0 ? null : Math.round(total * 100) / 100
+  }
+}
+
 // display_currency is tagged per row the same way net worth snapshots are,
 // and for the same reason: if the user's display currency ever changes, raw
 // historical values would otherwise mix units the moment they're compared
@@ -710,15 +851,22 @@ const RELIABLE_COST_BASIS_START_DATE = '2026-09-15'
 //
 // With holdingId, the same series for that one holding (its value and cost
 // basis from the per-holding daily snapshots) instead of the whole portfolio.
+//
+// When the recorded trades cover every holding in scope, the cost basis line
+// is rebuilt from them for every date — so it reaches back to the first
+// purchase, not just to when reliable cost snapshots began.
 const getHistory = async (userId, { holdingId } = {}) => {
   const displayCurrency = await accountsService.getDisplayCurrency(userId)
   let result
+  let costOn
   if (holdingId !== undefined && holdingId !== null && holdingId !== '') {
     if (!/^\d+$/.test(String(holdingId))) throw badRequest('holdingId must be a holding id')
     const holding = await getHoldingById(userId, Number(holdingId))
     result = await query(SQL.getHoldingHistory, [userId, holding.id])
+    costOn = await tradeCostSeries(userId, displayCurrency, holding.id)
   } else {
     result = await query(SQL.getHistory, [userId])
+    costOn = await tradeCostSeries(userId, displayCurrency)
   }
 
   const history = []
@@ -730,10 +878,12 @@ const getHistory = async (userId, { holdingId } = {}) => {
         ? currencyService.convertAmount(Number(row.total_cost_basis), row.display_currency, displayCurrency)
         : Promise.resolve({ available: false, amount: null })
     ])
+    const snapshotCost = costBasisIsReliable ? (convertedCostBasis.available ? convertedCostBasis.amount : Number(row.total_cost_basis)) : null
+    const rebuiltCost = costOn ? await costOn(row.snapshot_date) : null
     history.push({
       date: row.snapshot_date,
       totalValue: convertedValue.available ? convertedValue.amount : Number(row.total_value),
-      totalCostBasis: costBasisIsReliable ? (convertedCostBasis.available ? convertedCostBasis.amount : Number(row.total_cost_basis)) : null,
+      totalCostBasis: rebuiltCost ?? snapshotCost,
       displayCurrency: convertedValue.available ? displayCurrency : row.display_currency
     })
   }
@@ -814,6 +964,7 @@ module.exports = {
   setPurchasedAt,
   getPortfolio,
   getPortfolioCagr,
+  getPortfolioXirr,
   addToHolding,
   removeHolding,
   setAllocationTargets,

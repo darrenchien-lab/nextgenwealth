@@ -167,7 +167,18 @@ export default function TargetAllocationCard({ data, onCompareChange, onSaved })
               {data.targetCagr !== null && (
                 <span>Target CAGR: <span className="font-semibold text-gray-900 dark:text-gray-100">{data.targetCagr}%</span></span>
               )}
-              {data.actualCagr?.available ? (
+              {data.actualXirr?.available ? (
+                <>
+                  <span>
+                    Return per year: <span className={`font-semibold ${data.actualXirr.xirr >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{data.actualXirr.xirr}%</span>
+                  </span>
+                  {data.actualXirr.gainLoss !== null && (
+                    <span>
+                      Gain/loss: <span className={`font-semibold ${data.actualXirr.gainLoss >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{data.actualXirr.gainLoss}%</span>
+                    </span>
+                  )}
+                </>
+              ) : data.actualCagr?.available ? (
                 <span title={`Since the cost-weighted average purchase date (${data.actualCagr.effectiveStartDate})`}>
                   Actual CAGR: <span className={`font-semibold ${data.actualCagr.cagr >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{data.actualCagr.cagr}%</span>
                 </span>
