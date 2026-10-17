@@ -106,3 +106,19 @@ test('investments: fees are tracked per purchase, shrink with sales, and the det
   assert.equal(detail.costBasis, 2202100)
   assert.equal(detail.costBasisExcludingFees, 2200000)
 })
+
+test('investments: value history can be shown for one holding, and only for your own', async () => {
+  const { as } = await createTestUser()
+  const other = await createTestUser()
+  const a = (await as.post('/investments').send({ assetName: 'AAA', assetType: 'stock', quantity: 10, currency: 'IDR', totalSpent: 1000, price: 100 })).body.holding
+  await as.post('/investments').send({ assetName: 'BBB', assetType: 'stock', quantity: 1, currency: 'IDR', totalSpent: 5000, price: 5000 })
+
+  const all = (await as.get('/investments/history')).body.history
+  const one = (await as.get(`/investments/history?holdingId=${a.id}`)).body.history
+  assert.equal(all[all.length - 1].totalValue, 6000)
+  assert.equal(one[one.length - 1].totalValue, 1000)
+  assert.equal(one[one.length - 1].totalCostBasis, 1000)
+
+  assert.equal((await other.as.get(`/investments/history?holdingId=${a.id}`)).status, 404)
+  assert.equal((await as.get('/investments/history?holdingId=abc')).status, 400)
+})

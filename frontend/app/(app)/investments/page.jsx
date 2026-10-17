@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts'
-import { Pencil, X, Plus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History } from 'lucide-react'
+import { Pencil, X, Plus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
@@ -106,10 +106,32 @@ function validateHoldingForm(f) {
   return purchaseError(f.quantity, f.price, f.totalSpent)
 }
 
+const localDateKey = (value) => {
+  const d = new Date(value)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Hangs each buy/sell on the first chart point on or after its date (a
+// 'YYYY-MM' point for monthly-aggregated ranges), so the chart can mark the
+// days the invested capital moved and list those trades in the tooltip.
+function withTrades(rows, transactions) {
+  const tradesByIndex = new Map()
+  for (const t of transactions) {
+    const dateKey = localDateKey(t.occurred_at)
+    const index = rows.findIndex((row) => (row.date.length === 7 ? dateKey.slice(0, 7) <= row.date : dateKey <= row.date))
+    if (index < 0) continue
+    if (!tradesByIndex.has(index)) tradesByIndex.set(index, [])
+    tradesByIndex.get(index).push(`${t.type === 'buy' ? 'Buy' : 'Sell'} ${t.asset_name} ${formatQuantity(t.quantity)}`)
+  }
+  return rows.map((row, i) => (tradesByIndex.has(i) ? { ...row, trades: tradesByIndex.get(i) } : row))
+}
+
 export default function InvestmentsPage() {
   const [portfolio, setPortfolio] = useState(null)
   const [history, setHistory] = useState(null)
   const [historyRange, setHistoryRange] = useState('All')
+  // '' = the whole portfolio, otherwise one holding's id.
+  const [historyHoldingId, setHistoryHoldingId] = useState('')
   const [holdingsHistory, setHoldingsHistory] = useState(null)
   const [holdingsRange, setHoldingsRange] = useState('All')
   const [transactions, setTransactions] = useState([])
@@ -146,8 +168,16 @@ export default function InvestmentsPage() {
 
   const filteredHistory = useMemo(() => {
     const rows = applyChartRange(history, historyRange)
-    return rows ? withTimestamps(rows) : rows
-  }, [history, historyRange])
+    if (!rows) return rows
+    // Trades before the range's first day belong to earlier history; one on
+    // that first day is marked on it.
+    const firstKey = rows[0]?.date
+    const shownTrades = transactions.filter((t) => (
+      (!historyHoldingId || String(t.holding_id) === historyHoldingId)
+      && firstKey && localDateKey(t.occurred_at) >= (firstKey.length === 7 ? `${firstKey}-01` : firstKey)
+    ))
+    return withTimestamps(withTrades(rows, shownTrades))
+  }, [history, historyRange, historyHoldingId, transactions])
 
   const filteredHoldingsHistory = useMemo(() => {
     const rows = applyChartRange(holdingsHistory?.data, holdingsRange)
@@ -166,9 +196,9 @@ export default function InvestmentsPage() {
     }
   }
 
-  async function loadHistory() {
+  async function loadHistory(holdingId = historyHoldingId) {
     try {
-      const data = await request('/investments/history')
+      const data = await request(`/investments/history${holdingId ? `?holdingId=${holdingId}` : ''}`)
       setHistory(data.history)
     } catch {
       // The trend chart is a bonus view — a failed fetch here shouldn't
@@ -232,6 +262,7 @@ export default function InvestmentsPage() {
       loadAccounts()
     }
     init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleCreate(e) {
@@ -523,8 +554,30 @@ export default function InvestmentsPage() {
               icon={TrendingUp}
               color="blue"
               title="Portfolio Value Over Time"
-              action={history && history.length > 1 && (
-                <div className="flex flex-wrap gap-1">
+              action={history && (history.length > 1 || historyHoldingId) && (
+                <div className="flex flex-wrap items-center gap-1">
+                  {/* Outlined with a layers icon, and set apart by a divider,
+                      so it reads as "what to show" rather than as one more of
+                      the filled time-range buttons beside it. */}
+                  <div className="relative">
+                    <Layers size={14} className={`pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 ${historyHoldingId ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
+                    <select
+                      value={historyHoldingId}
+                      onChange={(e) => { setHistoryHoldingId(e.target.value); loadHistory(e.target.value) }}
+                      className={`cursor-pointer appearance-none rounded-lg border bg-white py-[3px] pl-7 pr-7 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:bg-gray-800 ${
+                        historyHoldingId
+                          ? 'border-blue-500 text-blue-700 dark:border-blue-400 dark:text-blue-300'
+                          : 'border-gray-300 text-gray-700 hover:border-gray-400 dark:border-gray-600 dark:text-gray-200 dark:hover:border-gray-500'
+                      }`}
+                    >
+                      <option value="" className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">All holdings</option>
+                      {portfolio.holdings.map((h) => (
+                        <option key={h.id} value={String(h.id)} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{h.asset_name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${historyHoldingId ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
+                  </div>
+                  <span className="mx-1.5 h-5 w-px bg-gray-200 dark:bg-gray-700" aria-hidden="true" />
                   {CHART_RANGES.map((r) => (
                     <button
                       key={r.label}
@@ -545,9 +598,22 @@ export default function InvestmentsPage() {
               // range instead of needing extra width and a manual scrollbar.
               <TrendAreaChart
                 data={filteredHistory}
+                height={260}
                 dataKey="totalValue"
-                name="Value"
-                secondary={{ dataKey: 'totalCostBasis', name: 'Cost basis' }}
+                name="Market value"
+                description="what it's worth at market price"
+                secondary={{ dataKey: 'totalCostBasis', name: 'Capital invested', description: 'the money you put in, fees included', color: '#3b82f6', solid: true }}
+                hint="Both lines rise together when you buy more; the gap between them is your profit, and it only changes when prices move. Dots mark days with a buy or sell."
+                markerKey="trades"
+                tooltipExtra={(row) => {
+                  const lines = []
+                  if (row.totalCostBasis !== null && row.totalCostBasis !== undefined) {
+                    const profit = row.totalValue - row.totalCostBasis
+                    lines.push({ label: 'Profit', value: `${profit >= 0 ? '+' : ''}${formatCurrency(profit, portfolio.displayCurrency)}`, tone: profit >= 0 ? 'up' : 'down' })
+                  }
+                  for (const trade of row.trades || []) lines.push({ label: trade })
+                  return lines
+                }}
                 formatValue={(value) => formatCurrency(value, portfolio.displayCurrency)}
                 formatAxisValue={formatNumber}
               />
@@ -601,7 +667,7 @@ export default function InvestmentsPage() {
                     )
                   })}
                 </div>
-                <ResponsiveContainer width="100%" height={340}>
+                <ResponsiveContainer width="100%" height={280}>
                   <LineChart data={filteredHoldingsHistory} margin={{ top: 10, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                     <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} ticks={timeAxisTicks(filteredHoldingsHistory)} tickFormatter={timeAxisFormatter(filteredHoldingsHistory)} fontSize={12} />
@@ -641,7 +707,7 @@ export default function InvestmentsPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
-          <div ref={holdingsCardRef} className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
+          <div ref={holdingsCardRef} className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
             <CardHeader icon={PieChart} color="violet" title="Holdings" />
             {portfolio.holdings.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
@@ -649,16 +715,16 @@ export default function InvestmentsPage() {
                 <p className="text-sm text-gray-400 dark:text-gray-500">No holdings yet.</p>
               </div>
             ) : (
-              <div className="-mx-5 overflow-x-auto">
+              <div className="-mx-4 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 dark:bg-gray-900/40 text-left text-xs uppercase text-gray-500 dark:text-gray-400">
                     <tr>
-                      <th className="px-4 py-3">Asset</th>
-                      <th className="px-4 py-3">Qty</th>
-                      <th className="px-4 py-3">Last Price</th>
-                      <th className="px-4 py-3">Value</th>
-                      <th className="px-4 py-3">Return</th>
-                      <th className="px-4 py-3"></th>
+                      <th className="px-3 py-2">Asset</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">Last Price</th>
+                      <th className="px-3 py-2">Value</th>
+                      <th className="px-3 py-2">Return</th>
+                      <th className="px-3 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -666,26 +732,26 @@ export default function InvestmentsPage() {
                       const TypeIcon = ASSET_TYPE_ICONS[h.asset_type] || Wallet
                       return (
                         <tr key={h.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/60">
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             <span className="inline-flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100">
                               <TypeIcon size={14} className="shrink-0 text-gray-400 dark:text-gray-500" />
                               <Link href={`/investments/${h.id}`} title="View details" className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{h.asset_name}</Link>
                               <span className="text-xs font-normal text-gray-400 dark:text-gray-500">({ASSET_TYPE_LABELS[h.asset_type] || h.asset_type})</span>
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatQuantity(h.quantity)}</td>
-                          <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatCurrency(h.current_price, h.currency)}</td>
-                          <td className="px-4 py-3 text-gray-900 dark:text-gray-100">
+                          <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatQuantity(h.quantity)}</td>
+                          <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatCurrency(h.current_price, h.currency)}</td>
+                          <td className="px-3 py-2 text-gray-900 dark:text-gray-100">
                             {formatCurrency(Number(h.quantity) * Number(h.current_price), h.currency)}
                             {/* The portfolio totals above are in the display currency, so show what this adds to them. */}
                             {h.currency !== portfolio.displayCurrency && h.currentValue !== null && (
                               <span className="block text-xs text-gray-400 dark:text-gray-500">≈ {formatCurrency(h.currentValue, portfolio.displayCurrency)}</span>
                             )}
                           </td>
-                          <td title="Return without fees, like your broker app shows — open the holding for the return after fees" className={`px-4 py-3 font-medium ${h.returnPercentageExcludingFees === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentageExcludingFees >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          <td title="Return without fees, like your broker app shows — open the holding for the return after fees" className={`px-3 py-2 font-medium ${h.returnPercentageExcludingFees === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentageExcludingFees >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                             {h.returnPercentageExcludingFees === null ? 'N/A' : `${h.returnPercentageExcludingFees >= 0 ? '+' : ''}${h.returnPercentageExcludingFees}%`}
                           </td>
-                          <td className="px-4 py-3 text-right">
+                          <td className="px-3 py-2 text-right">
                             <button onClick={() => openEdit(h)} title="Edit holding" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300">
                               <Pencil size={17} />
                             </button>
@@ -700,7 +766,7 @@ export default function InvestmentsPage() {
           </div>
 
           <div
-            className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700"
+            className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700"
             style={holdingsCardHeight ? { maxHeight: holdingsCardHeight } : undefined}
           >
             <CardHeader
@@ -720,13 +786,13 @@ export default function InvestmentsPage() {
                 <p className="text-sm text-gray-400 dark:text-gray-500">No buy/sell transactions yet.</p>
               </div>
             ) : (
-              <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                 {transactions.map((t) => {
                   const isBuy = t.type === 'buy'
                   return (
                     <li key={t.id} className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2.5">
-                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isBuy ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500' : 'bg-red-50 dark:bg-red-900/30 text-red-500'}`}>
+                        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isBuy ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500' : 'bg-red-50 dark:bg-red-900/30 text-red-500'}`}>
                           {isBuy ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
                         </div>
                         <div className="min-w-0">

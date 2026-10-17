@@ -17,7 +17,7 @@ router.get('/portfolio', asyncHandler(async (req, res) => {
 }))
 
 router.get('/history', asyncHandler(async (req, res) => {
-  const history = await investmentsService.getHistory(req.userId)
+  const history = await investmentsService.getHistory(req.userId, { holdingId: req.query.holdingId })
   res.json({ success: true, history })
 }))
 

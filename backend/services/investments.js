@@ -51,9 +51,11 @@ const SQL = {
   listAllocationTargets: loadSql('investments/listAllocationTargets'),
   getTargetCagr: loadSql('investments/getTargetCagr'),
   listHoldingSnapshotsAsOf: loadSql('investments/listHoldingSnapshotsAsOf'),
+  listTradesAsOf: loadSql('investments/listTradesAsOf'),
   getHistoryStartDate: loadSql('investments/getHistoryStartDate'),
   insertOrUpdateSnapshot: loadSql('investments/insertOrUpdateSnapshot'),
   getHistory: loadSql('investments/getHistory'),
+  getHoldingHistory: loadSql('investments/getHoldingHistory'),
   listAllUserIds: loadSql('investments/listAllUserIds'),
   insertOrUpdateHoldingSnapshot: loadSql('investments/insertOrUpdateHoldingSnapshot'),
   getHoldingsHistory: loadSql('investments/getHoldingsHistory'),
@@ -524,10 +526,27 @@ const getAllocationValuesAsOf = async (userId, asOf, displayCurrency) => {
   }
 
   const snapshots = await query(SQL.listHoldingSnapshotsAsOf, [userId, asOf])
+  const snapshotDateByHolding = new Map()
   for (const row of snapshots.rows) {
+    snapshotDateByHolding.set(row.holding_id, row.snapshot_date)
     const { amount, available } = await currencyService.convertAmount(Number(row.value), row.display_currency, displayCurrency)
     if (!available) { hasUnconverted = true; continue }
     add((row.category && row.category.trim()) || row.asset_name, amount)
+  }
+
+  // Snapshots are only saved on days the app ran, so a buy or sell between a
+  // holding's last snapshot and asOf (or before its first one) isn't in it
+  // yet, while the cash side already is in the account balance above. Those
+  // trades are added at their own price, the same way backdated trades
+  // correct the saved history.
+  const trades = await query(SQL.listTradesAsOf, [userId, asOf])
+  for (const trade of trades.rows) {
+    const snapshotDate = snapshotDateByHolding.get(trade.holding_id)
+    if (snapshotDate && trade.trade_date <= snapshotDate) continue
+    const tradeValue = Number(trade.quantity) * Number(trade.price_per_unit) * (trade.type === 'sell' ? -1 : 1)
+    const { amount, available } = await currencyService.convertAmount(tradeValue, trade.currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    add((trade.category && trade.category.trim()) || trade.asset_name, amount)
   }
 
   return { values, hasUnconverted }
@@ -688,9 +707,19 @@ const RELIABLE_COST_BASIS_START_DATE = '2026-09-15'
 // historical values would otherwise mix units the moment they're compared
 // or charted together. Every point is converted into the CURRENT display
 // currency here so the whole series stays in one consistent unit.
-const getHistory = async (userId) => {
+//
+// With holdingId, the same series for that one holding (its value and cost
+// basis from the per-holding daily snapshots) instead of the whole portfolio.
+const getHistory = async (userId, { holdingId } = {}) => {
   const displayCurrency = await accountsService.getDisplayCurrency(userId)
-  const result = await query(SQL.getHistory, [userId])
+  let result
+  if (holdingId !== undefined && holdingId !== null && holdingId !== '') {
+    if (!/^\d+$/.test(String(holdingId))) throw badRequest('holdingId must be a holding id')
+    const holding = await getHoldingById(userId, Number(holdingId))
+    result = await query(SQL.getHoldingHistory, [userId, holding.id])
+  } else {
+    result = await query(SQL.getHistory, [userId])
+  }
 
   const history = []
   for (const row of result.rows) {
