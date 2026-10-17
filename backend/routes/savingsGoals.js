@@ -16,6 +16,17 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ success: true, goals })
 }))
 
+// Helpers for setting a target, e.g. an emergency fund of 6 months' spending.
+router.get('/suggestions', asyncHandler(async (req, res) => {
+  const suggestions = await goalsService.getSuggestions(req.userId)
+  res.json({ success: true, ...suggestions })
+}))
+
+router.patch('/:id', asyncHandler(async (req, res) => {
+  const goal = await goalsService.updateGoal(req.userId, Number(req.params.id), req.body || {})
+  res.json({ success: true, goal })
+}))
+
 router.post('/:id/contribute', asyncHandler(async (req, res) => {
   const goal = await goalsService.contribute(req.userId, Number(req.params.id), req.body?.amount, req.body?.date)
   res.json({ success: true, goal })

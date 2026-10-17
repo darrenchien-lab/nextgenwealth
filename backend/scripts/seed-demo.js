@@ -3,6 +3,8 @@
 // fictional data — for screenshots and live demos, never for real use.
 //
 //   npm run seed-demo
+//   npm run seed-demo -- --no-investments   (a user who hasn't invested yet)
+//   npm run seed-demo -- --no-targets       (invested, but no allocation targets set)
 //
 // Re-running is safe: the demo user (and everything it owns) is deleted and
 // rebuilt from scratch each time. No other user is touched. Data is written
@@ -28,6 +30,10 @@ const DEMO_EMAIL = 'demo@example.com'
 const DEMO_PASSWORD = 'DemoPass123!'
 const HISTORY_CYCLES = 6
 const PAYDAY = 25
+// Without investments: no holdings, allocation targets or portfolio history,
+// to see the app the way someone who hasn't started investing does.
+const WITH_INVESTMENTS = !process.argv.includes('--no-investments')
+const WITH_TARGETS = WITH_INVESTMENTS && !process.argv.includes('--no-targets')
 
 // Seeded PRNG (mulberry32) so every run produces the same demo data.
 let seed = 20260925
@@ -221,17 +227,6 @@ async function run() {
     name: 'Annual Domain Renewal', amount: 210_000, dueDate: dateKey(addDays(today, 12)), accountId: acc.bca.id, categoryId: cat.Subscriptions
   })
 
-  // --- Savings goals ---------------------------------------------------------
-  const goals = [
-    { name: 'Emergency Fund', targetAmount: 60_000_000, targetDate: null, saved: [18_000_000, 3_000_000, 3_000_000, 3_000_000, 3_000_000] },
-    { name: 'Trip to Japan', targetAmount: 25_000_000, targetDate: dateKey(new Date(today.getFullYear() + 1, 3, 1)), saved: [4_000_000, 2_500_000, 2_500_000, 1_500_000] },
-    { name: 'New Laptop', targetAmount: 22_000_000, targetDate: dateKey(new Date(today.getFullYear(), today.getMonth() + 3, 1)), saved: [8_000_000, 5_000_000, 4_500_000] }
-  ]
-  for (const g of goals) {
-    const goal = await goalsService.createGoal(userId, { name: g.name, targetAmount: g.targetAmount, targetDate: g.targetDate, accountId: acc.jenius.id })
-    for (const amount of g.saved) await goalsService.contribute(userId, goal.id, amount)
-  }
-
   // --- Investments -----------------------------------------------------------
   const monthsAgo = (m) => dateKey(new Date(today.getFullYear(), today.getMonth() - m, 12))
   const holdingsSpec = [
@@ -244,7 +239,7 @@ async function run() {
     { assetName: 'BTC', assetType: 'crypto', quantity: 0.012, currency: 'USD', costBasis: 64_500, price: 71_800, category: 'Crypto', purchasedAt: monthsAgo(8) }
   ]
   const holdings = []
-  for (const spec of holdingsSpec) {
+  for (const spec of WITH_INVESTMENTS ? holdingsSpec : []) {
     const { price, ...input } = spec
     const holding = await investmentsService.addHolding(userId, input)
     await investmentsService.updatePrice(userId, holding.id, price)
@@ -252,8 +247,10 @@ async function run() {
   }
   // A partial sale, so the investment activity log shows a realized gain.
   const bbca = holdings.find((h) => h.assetName === 'BBCA')
-  await investmentsService.removeHolding(userId, bbca.id, 300)
-  bbca.quantity -= 300
+  if (bbca) {
+    await investmentsService.removeHolding(userId, bbca.id, 300)
+    bbca.quantity -= 300
+  }
 
   // The activity log is stamped with the time of the call; move each entry
   // back to when it would really have happened.
@@ -263,12 +260,13 @@ async function run() {
       [`${h.purchasedAt}T10:30:00`, h.id]
     )
   }
+  if (WITH_INVESTMENTS) {
   await query(
     `UPDATE investment_transactions SET occurred_at = $1 WHERE holding_id = $2 AND type = 'sell'`,
     [at(addDays(today, -18), 14, 5), bbca.id]
   )
 
-  await investmentsService.setAllocationTargets(userId, [
+  if (WITH_TARGETS) await investmentsService.setAllocationTargets(userId, [
     { assetName: 'Indonesian Equities', targetPercentage: 25 },
     { assetName: 'US Equities', targetPercentage: 15 },
     { assetName: 'Money Market', targetPercentage: 10 },
@@ -276,6 +274,7 @@ async function run() {
     { assetName: 'Crypto', targetPercentage: 5 },
     { assetName: 'Bank', targetPercentage: 30 }
   ], 10)
+  }
 
   // --- History for the trend charts -------------------------------------------
   // Each holding's price drifts from its cost to today's price with a little
@@ -305,11 +304,13 @@ async function run() {
         [userId, h.id, dateKey(d), h.assetName, value, cost]
       )
     }
-    await query(
-      `INSERT INTO investment_snapshots (user_id, snapshot_date, total_value, total_cost_basis, display_currency)
-       VALUES ($1, $2, $3, $4, 'IDR')`,
-      [userId, dateKey(d), Math.round(totalValue * 100) / 100, Math.round(totalCost * 100) / 100]
-    )
+    if (WITH_INVESTMENTS) {
+      await query(
+        `INSERT INTO investment_snapshots (user_id, snapshot_date, total_value, total_cost_basis, display_currency)
+         VALUES ($1, $2, $3, $4, 'IDR')`,
+        [userId, dateKey(d), Math.round(totalValue * 100) / 100, Math.round(totalCost * 100) / 100]
+      )
+    }
     await query(
       `INSERT INTO net_worth_snapshots (user_id, snapshot_date, net_worth, display_currency)
        VALUES ($1, $2, $3, 'IDR')`,
@@ -318,7 +319,46 @@ async function run() {
   }
   // Today's points come from the real, current numbers.
   await reportsService.takeNetWorthSnapshot(userId)
-  await investmentsService.takeSnapshot(userId)
+  if (WITH_INVESTMENTS) await investmentsService.takeSnapshot(userId)
+
+  // The accounts existed for the whole history above, not just from today,
+  // so the app treats that history as real (goal pace, allocation compare).
+  await query('UPDATE accounts SET created_at = $1 WHERE user_id = $2', [`${dateKey(historyStart)}T00:00:00`, userId])
+
+  // --- Savings goals ---------------------------------------------------------
+  // Three linked to where the money is kept (they update on their own) and
+  // one tracked by hand, to show both kinds.
+  // Holding sources are left out when the demo has no investments.
+  const holdingSource = (name) => {
+    const holding = holdings.find((h) => h.assetName === name)
+    return holding ? [{ type: 'holding', id: holding.id }] : []
+  }
+  await goalsService.createGoal(userId, {
+    name: 'Emergency Fund',
+    targetAmount: 90_000_000,
+    sources: [{ type: 'account', id: acc.jenius.id }, ...holdingSource('Money Market Fund')]
+  })
+  await goalsService.createGoal(userId, {
+    name: 'Trip to Japan',
+    targetAmount: 60_000_000,
+    currency: 'IDR',
+    targetDate: dateKey(new Date(today.getFullYear() + 1, 3, 1)),
+    sources: [{ type: 'account', id: acc.wise.id }]
+  })
+  await goalsService.createGoal(userId, {
+    name: 'House Down Payment',
+    targetAmount: 250_000_000,
+    targetDate: dateKey(new Date(today.getFullYear() + 3, 0, 1)),
+    sources: [...holdingSource('Antam Gold'), ...holdingSource('VOO'), { type: 'account', id: acc.bca.id, amount: 10_000_000 }]
+  })
+  const laptop = await goalsService.createGoal(userId, {
+    name: 'New Laptop',
+    targetAmount: 22_000_000,
+    targetDate: dateKey(new Date(today.getFullYear(), today.getMonth() + 3, 1))
+  })
+  for (const [daysAgo, amount] of [[80, 6_000_000], [50, 3_000_000], [20, 2_500_000]]) {
+    await goalsService.contribute(userId, laptop.id, amount, dateKey(addDays(today, -daysAgo)))
+  }
 
   const { netWorth } = await accountsService.getNetWorth(userId)
   console.log('Demo data ready.')
