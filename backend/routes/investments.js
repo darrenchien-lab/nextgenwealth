@@ -1,14 +1,46 @@
 'use strict'
 const router = require('express').Router()
 const investmentsService = require('../services/investments')
+const priceUpdates = require('../services/priceUpdates')
 const { requireAuth } = require('../middleware')
 const { asyncHandler } = require('../shared/utils')
 
 router.use(requireAuth)
 
+// priceSource/priceSymbol (optional) link the new holding to a market listing
+// so its price updates on its own from the start.
 router.post('/', asyncHandler(async (req, res) => {
-  const holding = await investmentsService.addHolding(req.userId, req.body || {})
+  const body = req.body || {}
+  let holding = await investmentsService.addHolding(req.userId, body)
+  if (body.priceSource) holding = await priceUpdates.linkHolding(req.userId, holding.id, { source: body.priceSource, symbol: body.priceSymbol })
   res.status(201).json({ success: true, holding })
+}))
+
+// --- Automatic prices ---------------------------------------------------
+
+router.get('/market/search', asyncHandler(async (req, res) => {
+  const results = await priceUpdates.searchMarket(req.query.q, { currency: req.query.currency })
+  res.json({ success: true, results })
+}))
+
+router.get('/market/suggestions', asyncHandler(async (req, res) => {
+  const suggestions = await priceUpdates.suggestLinks(req.userId)
+  res.json({ success: true, suggestions })
+}))
+
+router.post('/prices/refresh', asyncHandler(async (req, res) => {
+  const result = await priceUpdates.refreshUserPrices(req.userId)
+  res.json({ success: true, ...result })
+}))
+
+router.put('/:id/price-source', asyncHandler(async (req, res) => {
+  const holding = await priceUpdates.linkHolding(req.userId, Number(req.params.id), req.body || {})
+  res.json({ success: true, holding })
+}))
+
+router.delete('/:id/price-source', asyncHandler(async (req, res) => {
+  const holding = await priceUpdates.unlinkHolding(req.userId, Number(req.params.id))
+  res.json({ success: true, holding })
 }))
 
 router.get('/portfolio', asyncHandler(async (req, res) => {

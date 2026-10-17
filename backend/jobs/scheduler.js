@@ -8,6 +8,7 @@ const insightsService = require('../services/insights')
 const accountsService = require('../services/accounts')
 const reportsService = require('../services/reports')
 const investmentsService = require('../services/investments')
+const priceUpdates = require('../services/priceUpdates')
 const { pool } = require('../db/pool')
 
 require('dotenv').config()
@@ -54,6 +55,15 @@ const startScheduledJobs = () => {
   // stale for as long as it stays off.
   currencyService.catchUpIfStale()
     .catch((err) => console.error('Startup exchange rate catch-up failed:', err.message))
+
+  // Market prices for automatically priced holdings, at 17:00 — after the
+  // Jakarta and Taiwan markets close for the day — and on startup for any
+  // user whose prices have gone stale while the server was off.
+  cron.schedule('0 17 * * *', async () => {
+    await priceUpdates.refreshAllUsersPrices()
+  })
+  priceUpdates.refreshAllUsersPrices({ onlyStale: true })
+    .catch((err) => console.error('Startup price update failed:', err.message))
 
   // Revoked JWTs only need to be kept around until they would have expired
   // anyway, so the prune job runs more often to keep the table small.
