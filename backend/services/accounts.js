@@ -317,6 +317,13 @@ const getStatement = async (userId, accountId, { startDate, endDate } = {}) => {
     return found
   }
 
+  // Every month with a movement, newest first ('YYYY-MM', local time), for
+  // browsing the statement a month at a time.
+  const months = [...new Set(entries.map((e) => {
+    const d = new Date(e.occurredAt)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }))].sort().reverse()
+
   const inRange = entries.filter((e) => (!rangeStart || e.occurredAt >= rangeStart) && (!rangeEnd || e.occurredAt <= rangeEnd))
   const openingBalance = rangeStart ? lastBalanceBefore(rangeStart) : balanceBeforeHistory
   const closingBalance = rangeEnd ? lastBalanceBefore(new Date(rangeEnd.getTime() + 1)) : roundCents(Number(account.balance))
@@ -330,6 +337,7 @@ const getStatement = async (userId, accountId, { startDate, endDate } = {}) => {
     totalIn: roundCents(inRange.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0)),
     totalOut: roundCents(inRange.filter((e) => e.amount < 0).reduce((sum, e) => sum - e.amount, 0)),
     entries: inRange,
+    months,
     consistent: Math.abs(balanceBeforeHistory - Number(account.initial_balance)) < 0.005
   }
 }
