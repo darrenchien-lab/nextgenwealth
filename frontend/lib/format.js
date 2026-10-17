@@ -34,3 +34,10 @@ export function formatPercent(value) {
   if (value === null || value === undefined) return '-'
   return `${value}%`
 }
+
+// Short axis labels for narrow charts: 20.266.317 → "20,3 jt", 582.397 →
+// "582 rb", in the same id-ID convention (comma for decimals).
+export function formatCompact(amount) {
+  if (amount === null || amount === undefined) return '-'
+  return new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(amount)
+}

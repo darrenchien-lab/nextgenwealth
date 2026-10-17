@@ -200,9 +200,21 @@ export default function TransactionsPage() {
   }
 
   useEffect(() => {
+    // A link can open this page already filtered, e.g. the dashboard's
+    // Expense Breakdown: /transactions?categoryId=3&period=2026-10
     function init() {
       loadReference().catch((err) => setLoadError(err.message))
-      loadTransactions()
+      const params = new URLSearchParams(window.location.search)
+      const linkedCategoryId = params.get('categoryId')
+      const linkedPeriod = params.get('period')
+      if (linkedCategoryId || linkedPeriod) {
+        const linkedFilters = { ...filters, categoryId: linkedCategoryId || '' }
+        setFilters(linkedFilters)
+        if (linkedPeriod) setPeriod(linkedPeriod)
+        loadTransactions(linkedFilters, linkedPeriod || undefined)
+      } else {
+        loadTransactions()
+      }
     }
     init()
     // eslint-disable-next-line react-hooks/exhaustive-deps

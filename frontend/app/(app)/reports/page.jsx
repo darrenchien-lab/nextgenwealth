@@ -1,43 +1,15 @@
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Brush } from 'recharts'
+import { Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Brush } from 'recharts'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, formatAxisDate, withTimestamps } from '@/lib/chartRanges'
 import TrendAreaChart from '@/components/TrendAreaChart'
 import TargetAllocationCard from '@/components/TargetAllocationCard'
-import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
+import CycleCompareCard from '@/components/CycleCompareCard'
+import CurrencyExposureCard from '@/components/CurrencyExposureCard'
 
-const PIE_OUTER_RADIUS = 80
-const PIE_LABEL_RADIUS = PIE_OUTER_RADIUS + 20 // recharts places labels 20px outside the pie
-const PIE_LABEL_LINE_HEIGHT = 18
-
-// Which pie slices get an outside label. A label is dropped only when it
-// would overlap one already placed on the same side of the pie (biggest
-// slices are placed first), so a small slice still gets its label whenever
-// there's room for it. Dropped slices remain in the legend and tooltip.
-// Mirrors recharts' layout: slices run counter-clockwise from 3 o'clock, and
-// each label sits at its slice's mid-angle, anchored left or right of center.
-function pickLabeledSlices(rows) {
-  const total = rows.reduce((sum, r) => sum + Number(r.amount), 0)
-  if (!(total > 0)) return new Set()
-
-  let start = 0
-  const slices = rows.map((r, index) => {
-    const share = Number(r.amount) / total
-    const midAngle = (start + share / 2) * 2 * Math.PI
-    start += share
-    return { index, share, y: -PIE_LABEL_RADIUS * Math.sin(midAngle), rightSide: Math.cos(midAngle) >= 0 }
-  })
-
-  const placed = []
-  for (const slice of [...slices].sort((a, b) => b.share - a.share)) {
-    const collides = placed.some((p) => p.rightSide === slice.rightSide && Math.abs(p.y - slice.y) < PIE_LABEL_LINE_HEIGHT)
-    if (!collides) placed.push(slice)
-  }
-  return new Set(placed.map((s) => s.index))
-}
 
 // Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
 // classes — these CSS variables (defined in globals.css) are the dark-mode
@@ -62,15 +34,16 @@ function pctChange(from, to) {
   return Math.round(((to - from) / from) * 1000) / 10
 }
 
+// "This Cycle" is not computed here: it comes from the dashboard summary, so
+// it follows the budget cycle (and salary counted in the next cycle) exactly
+// like the Dashboard's net worth change does.
 function computeSummaryChanges(history) {
   if (!history || history.length === 0) return null
   const latest = history[history.length - 1]
   const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
   const startOfYear = new Date(now.getFullYear(), 0, 1)
 
   return {
-    thisMonth: pctChange(closestOnOrBefore(history, startOfMonth).netWorth, latest.netWorth),
     thisYear: pctChange(closestOnOrBefore(history, startOfYear).netWorth, latest.netWorth),
     allTime: pctChange(history[0].netWorth, latest.netWorth)
   }
@@ -112,11 +85,9 @@ function SummaryChangeCard({ label, value }) {
 }
 
 export default function ReportsPage() {
-  const [breakdown, setBreakdown] = useState(null)
-  const chartTheme = useChartTheme()
-  const [trends, setTrends] = useState(null)
   const [netWorthHistory, setNetWorthHistory] = useState(null)
   const [targetAllocation, setTargetAllocation] = useState(null)
+  const [cycleSummary, setCycleSummary] = useState(null)
   const [nwRange, setNwRange] = useState('All')
   const [chartType, setChartType] = useState('line')
   const [showMonthlyDetail, setShowMonthlyDetail] = useState(false)
@@ -135,14 +106,12 @@ export default function ReportsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [breakdownData, trendsData, historyData, targetData] = await Promise.all([
-          request('/reports/expense-breakdown'),
-          request('/reports/trends?months=6'),
+        const [historyData, targetData, summaryData] = await Promise.all([
           request('/reports/net-worth-history'),
-          request('/investments/allocation-targets')
+          request('/investments/allocation-targets'),
+          request('/reports/dashboard')
         ])
-        setBreakdown(breakdownData)
-        setTrends(trendsData.trends)
+        setCycleSummary(summaryData)
         setNetWorthHistory(historyData.history)
         setTargetAllocation(targetData)
       } catch (err) {
@@ -184,9 +153,6 @@ export default function ReportsPage() {
 
   if (loading) return <p className="text-sm text-gray-500 dark:text-gray-400">Loading reports...</p>
 
-  const expenseSlices = breakdown ? withDistinctColors(breakdown.breakdown, { nameKey: 'categoryName', theme: chartTheme }) : []
-  const labeledSlices = pickLabeledSlices(expenseSlices)
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -205,62 +171,17 @@ export default function ReportsPage() {
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
-            Expense Breakdown{breakdown?.periodLabel ? ` (${breakdown.periodLabel})` : ''}
-          </h2>
-          {breakdown && breakdown.breakdown.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart margin={{ top: 20 }}>
-                <Pie
-                  data={expenseSlices}
-                  dataKey="amount"
-                  nameKey="categoryName"
-                  outerRadius={PIE_OUTER_RADIUS}
-                  label={(d) => (labeledSlices.has(d.index) ? `${d.categoryName} (${d.percentage}%)` : null)}
-                  labelLine={(d) => (labeledSlices.has(d.index)
-                    ? <path d={`M${d.points[0].x},${d.points[0].y}L${d.points[1].x},${d.points[1].y}`} stroke={d.stroke} fill="none" />
-                    : <g />)}
-                >
-                  {expenseSlices.map((entry, index) => (
-                    <Cell key={entry.categoryId ?? index} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, breakdown.displayCurrency)} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-64 items-center justify-center text-sm text-gray-400 dark:text-gray-500">No expenses recorded this month</div>
-          )}
-        </div>
+        <CycleCompareCard />
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Monthly Trend</h2>
-          {trends && trends.some((t) => t.income > 0 || t.expense > 0) ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={trends}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="month" fontSize={12} />
-                <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, breakdown?.displayCurrency)} />
-                <Legend />
-                <Line type="monotone" dataKey="income" stroke="#10b981" name="Income" />
-                <Line type="monotone" dataKey="expense" stroke="#ef4444" name="Expense" />
-                <Line type="monotone" dataKey="net" stroke="#2563eb" name="Net" />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-64 items-center justify-center text-sm text-gray-400 dark:text-gray-500">No transaction data yet</div>
-          )}
-        </div>
+        {/* Side by side with Target vs Actual; full width when that card is hidden. */}
+        <CurrencyExposureCard wide={!!targetAllocation && targetAllocation.comparison.length === 0 && !(Number(targetAllocation.totalValue) > 0)} />
 
-        <TargetAllocationCard data={targetAllocation} onCompareChange={loadTargetAllocation} />
+        <TargetAllocationCard data={targetAllocation} onCompareChange={loadTargetAllocation} onSaved={setTargetAllocation} />
 
         <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Net Worth History</h2>
-            {netWorthHistory && netWorthHistory.length > 0 && (
+            {netWorthHistory && netWorthHistory.length > 1 && (
               <div className="flex flex-wrap gap-2">
                 <div className="flex gap-1">
                   <button
@@ -297,10 +218,10 @@ export default function ReportsPage() {
             )}
           </div>
 
-          {netWorthHistory && netWorthHistory.length > 0 ? (
+          {netWorthHistory && netWorthHistory.length > 1 ? (
             <>
               <div className="mb-4 grid grid-cols-3 gap-3">
-                <SummaryChangeCard label="This Month" value={computeSummaryChanges(netWorthHistory).thisMonth} />
+                <SummaryChangeCard label="This Cycle" value={cycleSummary?.changes?.netWorth ?? null} />
                 <SummaryChangeCard label="This Year" value={computeSummaryChanges(netWorthHistory).thisYear} />
                 <SummaryChangeCard label="All-Time" value={computeSummaryChanges(netWorthHistory).allTime} />
               </div>
@@ -313,7 +234,7 @@ export default function ReportsPage() {
                 // Brush (Recharts' built-in zoom/pan slider) replaces the old
                 // drag-to-scroll wrapper — drag its handles to zoom into a
                 // range instead of needing extra width and a manual scrollbar.
-                <ResponsiveContainer width="100%" height={380}>
+                <ResponsiveContainer width="100%" height={280}>
                   {chartType === 'bar' ? (
                     <BarChart data={filteredNetWorthHistory} margin={{ top: 10, right: 16 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
@@ -328,7 +249,7 @@ export default function ReportsPage() {
                       data={netWorthTimeSeries}
                       dataKey="netWorth"
                       name="Net Worth"
-                      height={380}
+                      height={280}
                       formatValue={(value, row) => formatCurrency(value, row.displayCurrency)}
                       formatAxisValue={formatNumber}
                     />
@@ -381,9 +302,9 @@ export default function ReportsPage() {
               )}
             </>
           ) : (
-            <div className="flex h-64 items-center justify-center text-sm text-gray-400 dark:text-gray-500">
-              No net worth history yet — snapshots are recorded once a day
-            </div>
+            <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
+              Your net worth history starts building from today: a point is saved each day, so this chart fills in over the coming days.
+            </p>
           )}
         </div>
       </div>

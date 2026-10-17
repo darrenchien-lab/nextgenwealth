@@ -7,7 +7,9 @@ const SQL = {
   getRateVsUsd: loadSql('currency/getRateVsUsd'),
   insertRate: loadSql('currency/insertRate'),
   listSupportedCurrencies: loadSql('currency/listSupportedCurrencies'),
-  getCacheStaleness: loadSql('currency/getCacheStaleness')
+  getCacheStaleness: loadSql('currency/getCacheStaleness'),
+  getRateVsUsdAsOf: loadSql('currency/getRateVsUsdAsOf'),
+  getFirstRateDate: loadSql('currency/getFirstRateDate')
 }
 
 // Switched from Frankfurter.app (ECB-sourced, ~30 currencies, no TWD) to
@@ -46,6 +48,25 @@ const convertAmount = async (amount, fromCurrency, toCurrency) => {
   const asOf = rateFrom.fetchedAt < rateTo.fetchedAt ? rateFrom.fetchedAt : rateTo.fetchedAt
   return { amount: converted, available: true, asOf }
 }
+
+// The same conversion at the rates in effect on a past day ('YYYY-MM-DD'),
+// from the daily rate history; unavailable before the first saved rate.
+const rateVsUsdAsOf = async (currency, date) => {
+  const code = currency.toUpperCase()
+  if (code === 'USD') return 1
+  const row = (await query(SQL.getRateVsUsdAsOf, [code, date])).rows[0]
+  return row ? Number(row.rate) : null
+}
+
+const convertAmountAsOf = async (amount, fromCurrency, toCurrency, date) => {
+  if (fromCurrency.toUpperCase() === toCurrency.toUpperCase()) return { amount, available: true }
+  const [rateFrom, rateTo] = await Promise.all([rateVsUsdAsOf(fromCurrency, date), rateVsUsdAsOf(toCurrency, date)])
+  if (!rateFrom || !rateTo) return { amount: null, available: false }
+  return { amount: Math.round((amount / rateFrom) * rateTo * 100) / 100, available: true }
+}
+
+// First day the rate history covers, 'YYYY-MM-DD', or null.
+const getFirstRateDate = async () => (await query(SQL.getFirstRateDate)).rows[0]?.first_date || null
 
 // Runs once a day from the scheduler. On failure it deliberately swallows the
 // error and leaves the existing cache in place, per the Exchange Rate
@@ -108,4 +129,4 @@ const catchUpIfStale = async () => {
   }
 }
 
-module.exports = { convertAmount, fetchAndCacheDailyRates, getCacheStaleness, getSupportedCurrencies, catchUpIfStale }
+module.exports = { convertAmount, convertAmountAsOf, getFirstRateDate, fetchAndCacheDailyRates, getCacheStaleness, getSupportedCurrencies, catchUpIfStale }

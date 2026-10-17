@@ -90,10 +90,9 @@ test('dashboard: net worth change compares by budget cycle, so an early salary c
 
   const current = (await as.get('/reports/dashboard')).body
   const previous = (await as.get('/reports/dashboard?periodOffset=1')).body
-  // The figures themselves stay real…
+  // The salary belongs to the cycle it was for, in both the figure and its change.
   assert.equal(current.netWorth, 15000000)
-  assert.equal(previous.netWorth, 15000000)
-  // …but the growth goes to the cycle the salary was for.
+  assert.equal(previous.netWorth, 10000000)
   assert.equal(current.changes.netWorth, 50)
   assert.equal(previous.changes.netWorth, 0)
 })
@@ -146,4 +145,57 @@ test('target allocation: actual is compared with a past cycle end, offered only 
   assert.equal(byName.Bank.actualPercentage, 50)
   assert.equal(byName.Bank.previousPercentage, 100)
   assert.equal(byName.e_wallet.previousPercentage, 0)
+})
+
+test('target allocation: a buy after the last saved holding value still counts at the past cycle end', async () => {
+  const { user, as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const broker = (await as.post('/accounts').send({ name: 'Broker Cash', type: 'e_wallet', currency: 'IDR', balance: 1000000 })).body.account
+  const holding = (await as.post('/investments').send({ assetName: 'BBCA', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 100000, price: 1000 })).body.holding
+  await as.patch(`/investments/${holding.id}/category`).send({ category: 'Equity' })
+  await as.put('/investments/allocation-targets').send({ targets: [{ assetName: 'Equity', targetPercentage: 50 }, { assetName: 'e_wallet', targetPercentage: 50 }] })
+
+  const previousStart = periods.getPeriodBoundsForOffset(1, 1).start
+  await pool.query('UPDATE accounts SET created_at = $1 WHERE id = $2', [previousStart, broker.id])
+  await pool.query(
+    `INSERT INTO net_worth_snapshots (user_id, snapshot_date, net_worth, display_currency) VALUES ($1, $2, 1000000, 'IDR')`,
+    [user.id, localDateTime(previousStart).slice(0, 10)]
+  )
+
+  // Bought 200 more on the last day of the previous cycle, a day with no saved portfolio value.
+  const lastDay = periods.getPeriodBoundsForOffset(1, 1).end
+  const add = await as.post(`/investments/${holding.id}/add`).send({ quantity: 200, totalSpent: 200000, accountId: broker.id, date: localDateTime(lastDay).slice(0, 10) })
+  assert.equal(add.status, 200)
+
+  const res = (await as.get('/investments/allocation-targets?compareOffset=1')).body
+  const byName = Object.fromEntries(res.comparison.map((c) => [c.assetName, c]))
+  // Then: 800,000 cash and 200 shares worth 200,000 (the 100 bought today didn't exist yet).
+  assert.equal(byName.Equity.previousPercentage, 20)
+  assert.equal(byName.e_wallet.previousPercentage, 80)
+})
+
+test('dashboard: the cycle trend runs day by day through the cycle, and the breakdown can show the previous cycle', async () => {
+  const { as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const account = (await as.post('/accounts').send({ name: 'Bank', type: 'bank', currency: 'IDR', balance: 0 })).body.account
+  const category = (await as.post('/categories').send({ name: 'Food', type: 'expense' })).body.category
+
+  const currentStart = periods.getPeriodBoundsForOffset(1, 0).start
+  const previousStart = periods.getPeriodBoundsForOffset(1, 1).start
+  const dayKey = (d) => localDateTime(d).slice(0, 10)
+  await as.post('/transactions').send({ accountId: account.id, type: 'income', amount: 1000000, occurredAt: dayKey(currentStart) })
+  await as.post('/transactions').send({ accountId: account.id, type: 'expense', amount: 200000, categoryId: category.id })
+  await as.post('/transactions').send({ accountId: account.id, type: 'expense', amount: 50000, categoryId: category.id, occurredAt: dayKey(previousStart) })
+
+  const trend = (await as.get('/reports/cycle-trend')).body
+  assert.equal(trend.days[0].date, dayKey(currentStart))
+  assert.equal(trend.days[0].income, 1000000)
+  const today = trend.days[trend.days.length - 1]
+  assert.equal(today.date, dayKey(new Date()))
+  assert.deepEqual([today.income, today.expense, today.net], [1000000, 200000, 800000])
+
+  const previous = (await as.get('/reports/expense-breakdown?periodOffset=1')).body
+  assert.equal(previous.total, 50000)
+  assert.equal(previous.breakdown[0].categoryName, 'Food')
+  assert.match(previous.period, /^\d{4}-\d{2}$/)
 })

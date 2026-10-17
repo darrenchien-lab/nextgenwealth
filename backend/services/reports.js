@@ -142,9 +142,18 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
   // closed past cycle, the snapshot as of that cycle's end reads as "what it
   // was then" instead of today's live figure.
   const liveNetWorth = await accountsService.getNetWorth(userId)
-  const netWorth = (end && end < new Date())
+  const actualNetWorth = (end && end < new Date())
     ? (await getNetWorthAsOf(userId, end, displayCurrency)) ?? liveNetWorth.netWorth
     : liveNetWorth.netWorth
+
+  // Net worth reads by budget cycle, like income and expense: money that
+  // arrived before the cycle ended but counts in the next one (see
+  // getCarriedOverAmount) belongs to that next cycle, in both the figure and
+  // its change, so the two never point in opposite directions. The
+  // day-by-day real figure stays on the Reports net worth history.
+  const netWorth = changes
+    ? Math.round((actualNetWorth - changes.carriedOutOfPeriod) * 100) / 100
+    : actualNetWorth
 
   const savingsRate = savingsRateOf({ income, expense })
   const financialHealthScore = computeFinancialHealthScore((savingsRate ?? 0) / 100)
@@ -154,11 +163,8 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
   // misleading "-100%". Net worth still compares, since it never resets.
   const periodIsEmpty = income === 0 && expense === 0
 
-  // The net worth change compares by budget cycle, not calendar date: money
-  // counted in a later cycle (see getCarriedOverAmount) is taken out of the
-  // cycle it physically arrived in. The netWorth figure itself stays real.
   const netWorthChange = changes && changes.netWorthAtPeriodStart !== null
-    ? pctChange(changes.netWorthAtPeriodStart - changes.carriedIntoPeriod, netWorth - changes.carriedOutOfPeriod)
+    ? pctChange(changes.netWorthAtPeriodStart - changes.carriedIntoPeriod, netWorth)
     : null
 
   return {
@@ -192,8 +198,10 @@ const getCashFlow = async (userId, { startDate, endDate }) => {
   return aggregates.getIncomeExpense(userId, { startDate, endDate })
 }
 
-const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId }) =>
-  aggregates.getExpenseBreakdown(userId, { startDate, endDate, categoryId })
+const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId, periodOffset }) =>
+  aggregates.getExpenseBreakdown(userId, { startDate, endDate, categoryId, periodOffset })
+
+const getCycleTrend = async (userId, { periodOffset } = {}) => aggregates.getCycleTrend(userId, { periodOffset })
 
 const getTrends = async (userId, months) => aggregates.getMonthlyTrend(userId, months)
 
@@ -326,10 +334,146 @@ const getNetWorthHistory = async (userId) => {
   return history
 }
 
+const PERIOD_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
+const round2 = (n) => Math.round(n * 100) / 100
+const COMPARE_CYCLES = 12
+
+// Income, expense and spending by category for two budget cycles side by
+// side ('YYYY-MM' keys; by default the current cycle against the one before
+// it), plus the last 12 cycles to choose from.
+const getCycleComparison = async (userId, { a, b } = {}) => {
+  for (const key of [a, b]) {
+    if (key && !PERIOD_KEY.test(key)) throw badRequest('Periods must be in YYYY-MM format')
+  }
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const options = []
+  for (let offset = 0; offset < COMPARE_CYCLES; offset++) {
+    const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, offset)
+    options.push({ period: periods.periodKeyForDate(cycleStartDay, start), label: periods.formatPeriodLabel(start, end, cycleStartDay) })
+  }
+
+  const describe = async (key) => {
+    const { start, end } = periods.periodKeyToBounds(cycleStartDay, key)
+    const range = { startDate: start.toISOString(), endDate: end.toISOString() }
+    const totals = await aggregates.getIncomeExpense(userId, range)
+    const breakdown = await aggregates.getExpenseBreakdown(userId, range)
+    return {
+      period: key,
+      label: periods.formatPeriodLabel(start, end, cycleStartDay),
+      income: totals.income,
+      expense: totals.expense,
+      net: totals.net,
+      categories: breakdown.breakdown,
+      hasUnconverted: totals.hasUnconverted || breakdown.hasUnconverted
+    }
+  }
+  const first = await describe(a || options[0].period)
+  const second = await describe(b || options[1].period)
+
+  // One row per category spent on in either cycle, biggest first.
+  const rows = new Map()
+  for (const [side, cycle] of [['a', first], ['b', second]]) {
+    for (const c of cycle.categories) {
+      const key = c.categoryId ?? 'uncategorized'
+      const row = rows.get(key) || { categoryId: c.categoryId, categoryName: c.categoryName, a: 0, b: 0 }
+      row[side] = c.amount
+      rows.set(key, row)
+    }
+  }
+  const categories = Array.from(rows.values())
+    .map((row) => ({ ...row, change: round2(row.a - row.b), changePercentage: row.b > 0 ? Math.round(((row.a - row.b) / row.b) * 1000) / 10 : null }))
+    .sort((x, y) => Math.max(y.a, y.b) - Math.max(x.a, x.b))
+
+  const strip = ({ categories: _omit, ...cycle }) => cycle
+  return {
+    displayCurrency: await accountsService.getDisplayCurrency(userId),
+    a: strip(first),
+    b: strip(second),
+    categories,
+    options
+  }
+}
+
+// How much of what you own is in each currency (accounts at their balance,
+// holdings at their market value, both in their own currency), and how much
+// exchange-rate moves since the start of a budget cycle have changed its
+// worth in the display currency: today's amounts valued at today's rates
+// versus at the rates in effect when that cycle began.
+const getCurrencyExposure = async (userId, { sinceOffset } = {}) => {
+  const displayCurrency = await accountsService.getDisplayCurrency(userId)
+  const positions = new Map()
+  const add = (currency, amount, name, kind) => {
+    const position = positions.get(currency) || { currency, amount: 0, items: [] }
+    position.amount += amount
+    position.items.push({ name, kind, amount: round2(amount) })
+    positions.set(currency, position)
+  }
+  for (const account of await accountsService.listAccounts(userId)) add(account.currency, Number(account.balance), account.name, 'account')
+  const portfolio = await investmentsService.getPortfolio(userId)
+  for (const holding of portfolio.holdings) add(holding.currency, Number(holding.quantity) * Number(holding.current_price), holding.asset_name, 'holding')
+
+  let total = 0
+  const exposure = []
+  // Currencies with no exchange rate can't be valued, so they're listed
+  // apart instead of quietly left out of the percentages.
+  const unconverted = []
+  for (const position of positions.values()) {
+    const { amount, available } = await currencyService.convertAmount(position.amount, position.currency, displayCurrency)
+    if (!available) { unconverted.push(position.currency); continue }
+    total += amount
+    exposure.push({ ...position, amount: round2(position.amount), value: amount })
+  }
+  for (const e of exposure) e.percentage = total !== 0 ? Math.round((e.value / total) * 1000) / 10 : 0
+  exposure.sort((x, y) => y.value - x.value)
+
+  // Cycle starts the rate history reaches back to.
+  const firstRateDate = await currencyService.getFirstRateDate()
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const sinceOptions = []
+  for (let offset = 0; offset < 6 && firstRateDate; offset++) {
+    const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, offset)
+    const date = toDateKey(start)
+    if (date < firstRateDate) break
+    sinceOptions.push({ offset, date, label: periods.formatPeriodLabel(start, end, cycleStartDay) })
+  }
+  const since = sinceOptions.find((o) => o.offset === Number(sinceOffset)) || sinceOptions[0] || null
+
+  let fxImpact = null
+  if (since) {
+    const byCurrency = []
+    const noHistory = []
+    let impactTotal = 0
+    for (const e of exposure) {
+      if (e.currency === displayCurrency) continue
+      const then = await currencyService.convertAmountAsOf(e.amount, e.currency, displayCurrency, since.date)
+      // Rates per one unit, converted from a million so small ones (e.g.
+      // IDR into USD) keep their precision past two decimals.
+      const rateNow = await currencyService.convertAmount(1_000_000, e.currency, displayCurrency)
+      const rateThen = await currencyService.convertAmountAsOf(1_000_000, e.currency, displayCurrency, since.date)
+      if (!then.available || !rateNow.available || !rateThen.available) { noHistory.push(e.currency); continue }
+      const impact = round2(e.value - then.amount)
+      impactTotal += impact
+      byCurrency.push({
+        currency: e.currency,
+        rateThen: rateThen.amount / 1_000_000,
+        rateNow: rateNow.amount / 1_000_000,
+        rateChangePercentage: rateThen.amount ? Math.round(((rateNow.amount - rateThen.amount) / rateThen.amount) * 1000) / 10 : null,
+        impact
+      })
+    }
+    fxImpact = { total: round2(impactTotal), byCurrency, noHistory }
+  }
+
+  return { displayCurrency, total: round2(total), exposure, since, sinceOptions, fxImpact, unconverted, hasUnconverted: unconverted.length > 0 }
+}
+
 module.exports = {
+  getCycleComparison,
+  getCurrencyExposure,
   getDashboardSummary,
   getCashFlow,
   getExpenseBreakdown,
+  getCycleTrend,
   getTrends,
   getAssetAllocation,
   takeNetWorthSnapshot,

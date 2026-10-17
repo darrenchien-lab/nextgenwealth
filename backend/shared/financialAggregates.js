@@ -74,21 +74,28 @@ const getIncomeExpense = async (userId, { startDate, endDate }) => {
   }
 }
 
+// 'YYYY-MM' key of a budget cycle (the month it starts in).
+const cycleKey = (start) => `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`
+const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
 // Expense breakdown by category for a period, as amounts and percentages.
 // Defaults to the user's current budget cycle when no explicit range is
-// given (mirrors getDashboardSummary's default), instead of all-time.
-const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId } = {}) => {
+// given (mirrors getDashboardSummary's default), instead of all-time;
+// periodOffset 1 is the cycle before it, like the dashboard toggle.
+const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId, periodOffset } = {}) => {
   const displayCurrency = await getDisplayCurrency(userId)
 
   let effectiveStartDate = startDate
   let effectiveEndDate = endDate
   let periodLabel = null
+  let period = null
   if (!startDate && !endDate) {
     const cycleStartDay = await accountsService.getCycleStartDay(userId)
-    const { start, end } = periods.getCurrentPeriodBounds(cycleStartDay)
+    const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, Number(periodOffset) === 1 ? 1 : 0)
     effectiveStartDate = start.toISOString()
     effectiveEndDate = end.toISOString()
     periodLabel = periods.formatPeriodLabel(start, end, cycleStartDay)
+    period = cycleKey(start)
   }
 
   const params = [userId, effectiveStartDate || null, effectiveEndDate || null]
@@ -130,7 +137,57 @@ const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId } = 
     percentage: total > 0 ? Math.round((entry.amount / total) * 1000) / 10 : 0
   }))
 
-  return { displayCurrency, total: Math.round(total * 100) / 100, breakdown, hasUnconverted, periodLabel }
+  return { displayCurrency, total: Math.round(total * 100) / 100, breakdown, hasUnconverted, periodLabel, period }
+}
+
+// Day-by-day running totals of income and expense through one budget cycle
+// (periodOffset 0 = the current one, up to today; 1 = the previous one, in
+// full), for the dashboard's "this cycle" trend. Each transaction lands on
+// the day it counts for — a salary counted in the next cycle shows on that
+// cycle's first day.
+const getCycleTrend = async (userId, { periodOffset } = {}) => {
+  const displayCurrency = await getDisplayCurrency(userId)
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, Number(periodOffset) === 1 ? 1 : 0)
+
+  const result = await query(
+    `SELECT t.type, t.amount, a.currency, TO_CHAR(COALESCE(t.cycle_date, t.occurred_at), 'YYYY-MM-DD') AS day
+     FROM transactions t
+     JOIN accounts a ON a.id = t.account_id
+     WHERE t.user_id = $1
+       AND COALESCE(t.cycle_date, t.occurred_at) >= $2
+       AND COALESCE(t.cycle_date, t.occurred_at) <= $3`,
+    [userId, start, end]
+  )
+
+  const byDay = new Map()
+  let hasUnconverted = false
+  for (const row of result.rows) {
+    const { amount, available } = await currencyService.convertAmount(Number(row.amount), row.currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    const day = byDay.get(row.day) || { income: 0, expense: 0 }
+    day[row.type === 'income' ? 'income' : 'expense'] += amount
+    byDay.set(row.day, day)
+  }
+
+  const today = new Date()
+  const lastDay = end < today ? end : today
+  const days = []
+  let income = 0
+  let expense = 0
+  for (let d = new Date(start); d <= lastDay; d.setDate(d.getDate() + 1)) {
+    const key = dateKey(d)
+    income += byDay.get(key)?.income || 0
+    expense += byDay.get(key)?.expense || 0
+    days.push({
+      date: key,
+      income: Math.round(income * 100) / 100,
+      expense: Math.round(expense * 100) / 100,
+      net: Math.round((income - expense) * 100) / 100
+    })
+  }
+
+  return { displayCurrency, period: cycleKey(start), periodLabel: periods.formatPeriodLabel(start, end, cycleStartDay), days, hasUnconverted }
 }
 
 // Income/expense/net for each of the last N budget cycles, oldest first.
@@ -190,6 +247,7 @@ module.exports = {
   getDisplayCurrency,
   getIncomeExpense,
   getExpenseBreakdown,
+  getCycleTrend,
   getMonthlyTrend,
   getSpentForCategoryPeriod
 }

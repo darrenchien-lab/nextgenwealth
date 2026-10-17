@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Wallet, TrendingUp, TrendingDown, PiggyBank, Landmark, HeartPulse, Receipt, Target, LineChart as LineChartIcon, PieChart as PieIcon, ArrowRightLeft, RefreshCw } from 'lucide-react'
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { Wallet, TrendingUp, TrendingDown, PiggyBank, Landmark, HeartPulse, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, Activity, ShoppingBag } from 'lucide-react'
 import { request } from '@/lib/apiClient'
-import { formatCurrency, formatNumber, formatPercent } from '@/lib/format'
+import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
 import HealthGauge from '@/components/HealthGauge'
 import CardHeader from '@/components/CardHeader'
+import ScrollFadeList from '@/components/ScrollFadeList'
+import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { todayInputValue } from '@/lib/dates'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
@@ -29,6 +31,8 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState(null)
   const [trends, setTrends] = useState(null)
   const [allocation, setAllocation] = useState(null)
+  const [cycleTrend, setCycleTrend] = useState(null)
+  const [breakdown, setBreakdown] = useState(null)
   const chartTheme = useChartTheme()
   const [upcomingBills, setUpcomingBills] = useState(null)
   const [billsTotal, setBillsTotal] = useState(null)
@@ -47,10 +51,12 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [summaryData, trendsData, allocationData, billsData, goalsData, ratesData] = await Promise.all([
+        const [summaryData, trendsData, allocationData, cycleTrendData, breakdownData, billsData, goalsData, ratesData] = await Promise.all([
           request(`/reports/dashboard?periodOffset=${periodOffset}`),
           request('/reports/trends?months=6'),
           request(`/reports/asset-allocation?periodOffset=${periodOffset}`),
+          request(`/reports/cycle-trend?periodOffset=${periodOffset}`),
+          request(`/reports/expense-breakdown?periodOffset=${periodOffset}`),
           request('/bills/upcoming'),
           request('/goals'),
           request('/accounts/exchange-rates')
@@ -58,6 +64,8 @@ export default function DashboardPage() {
         setSummary(summaryData)
         setTrends(trendsData.trends)
         setAllocation(allocationData)
+        setCycleTrend(cycleTrendData)
+        setBreakdown(breakdownData)
         setUpcomingBills(billsData.bills)
         setBillsTotal({ total: billsData.total, displayCurrency: billsData.displayCurrency })
         setGoals(goalsData.goals)
@@ -117,7 +125,13 @@ export default function DashboardPage() {
   const currency = summary?.displayCurrency || 'IDR'
   const periodLabel = summary?.periodLabel || ''
   const changes = summary?.changes
-  const allocationSlices = allocation ? withDistinctColors(allocation.allocation, { nameKey: 'type', theme: chartTheme }) : []
+  const allocationSlices = allocation
+    ? withDistinctColors([...allocation.allocation].sort((a, b) => b.amount - a.amount), { nameKey: 'type', theme: chartTheme })
+    : []
+  const expenseSlices = breakdown
+    ? withDistinctColors([...breakdown.breakdown].sort((a, b) => b.amount - a.amount), { nameKey: 'categoryName', theme: chartTheme })
+    : []
+  const hasCycleActivity = cycleTrend && cycleTrend.days.some((d) => d.income > 0 || d.expense > 0)
 
   return (
     <div className="space-y-6">
@@ -208,47 +222,149 @@ export default function DashboardPage() {
         </p>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2">
           <CardHeader icon={TrendingUp} color="emerald" title="Cash Flow (last 6 months)" />
           {hasTrendData ? (
-            <ResponsiveContainer width="100%" height={210}>
+            <div className="min-h-[210px] flex-1">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trends}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                 <XAxis dataKey="month" fontSize={12} />
-                <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
+                <YAxis fontSize={12} tickFormatter={formatCompact} width={56} />
                 <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, currency)} />
                 <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="income" fill="#10b981" name="Income" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="expense" fill="#ef4444" name="Expense" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           ) : (
             <EmptyChartState />
           )}
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <CardHeader icon={LineChartIcon} color="blue" title="Monthly Trend" />
-          {hasTrendData ? (
-            <ResponsiveContainer width="100%" height={210}>
-              <LineChart data={trends}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="month" fontSize={12} />
-                <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, currency)} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="net" stroke="#2563eb" name="Net" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
+          <CardHeader
+            icon={ShoppingBag}
+            color="red"
+            title="Expense Breakdown"
+            subtitle={breakdown && breakdown.total > 0 ? `${formatCurrency(breakdown.total, breakdown.displayCurrency)} spent` : ''}
+          />
+          {expenseSlices.length > 0 ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-32 w-32 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={expenseSlices} dataKey="amount" nameKey="categoryName" innerRadius={36} outerRadius={60} paddingAngle={2} cornerRadius={3}>
+                      {expenseSlices.map((entry) => (
+                        <Cell key={entry.categoryName} fill={entry.color} stroke="none" />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, breakdown.displayCurrency)} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <ScrollFadeList className="h-40 w-full min-w-0 space-y-1 pr-1">
+                {expenseSlices.map((entry) => (
+                  <li key={entry.categoryName} title={formatCurrency(entry.amount, breakdown.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                    <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
+                      <span className="truncate">{entry.categoryName}</span>
+                    </span>
+                    <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
+                  </li>
+                ))}
+              </ScrollFadeList>
+            </div>
           ) : (
-            <EmptyChartState />
+            <EmptyChartState label="No spending this cycle yet" />
+          )}
+        </div>
+
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+          <CardHeader
+            icon={PieIcon}
+            color="amber"
+            title="Asset Allocation"
+            subtitle={allocation?.asOf
+              ? `As of ${new Date(`${allocation.asOf}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              : 'Now'}
+          />
+          {allocation && allocation.allocation.length > 0 ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-32 w-32 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={allocationSlices}
+                      dataKey="amount"
+                      nameKey="type"
+                      innerRadius={36}
+                      outerRadius={60}
+                      paddingAngle={2}
+                      cornerRadius={3}
+                    >
+                      {allocationSlices.map((entry) => (
+                        <Cell key={entry.type} fill={entry.color} stroke="none" />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <ScrollFadeList className="h-40 w-full min-w-0 space-y-1 pr-1">
+                {allocationSlices.map((entry) => (
+                  <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                    <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
+                      <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
+                    </span>
+                    <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
+                  </li>
+                ))}
+              </ScrollFadeList>
+            </div>
+          ) : (
+            <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
+              <p className="text-sm text-gray-500 dark:text-gray-400">Add your bank accounts, e-wallets and cash to see how your money is spread.</p>
+              <Link href="/accounts" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">Add an account</Link>
+            </div>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2">
+          <CardHeader icon={Activity} color="blue" title="Monthly Trend" subtitle={cycleTrend ? cycleTrend.periodLabel : ''} />
+          {hasCycleActivity ? (
+            // Same chart as the Reports page's Monthly Trend used to be
+            // (income, expense and net lines), but across the days of this
+            // cycle, each point the total so far.
+            <div className="min-h-[210px] flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={cycleTrend.days}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="date" fontSize={12} tickFormatter={(d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`} minTickGap={16} />
+                <YAxis fontSize={12} tickFormatter={formatCompact} width={56} />
+                <Tooltip
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  labelFormatter={(d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                  formatter={(value) => formatCurrency(value, currency)}
+                />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                <Line type="monotone" dataKey="income" stroke="#10b981" name="Income" />
+                <Line type="monotone" dataKey="expense" stroke="#ef4444" name="Expense" />
+                <Line type="monotone" dataKey="net" stroke="#2563eb" name="Net" />
+              </LineChart>
+            </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyChartState label="Nothing recorded this cycle yet" />
+          )}
+        </div>
+
+        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[300px]">
           <CardHeader
             icon={Receipt}
             color="red"
@@ -262,17 +378,21 @@ export default function DashboardPage() {
             </p>
           )}
           {payError && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{payError}</p>}
+          <ScrollFadeBox className="pr-1">
           {upcomingBills && upcomingBills.length > 0 ? (
             <ul className="space-y-3">
-              {upcomingBills.slice(0, 2).map((bill) => (
-                <li key={bill.id} className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 dark:bg-red-900/30 text-red-500">
-                      <Receipt size={16} />
+              {upcomingBills.map((bill) => (
+                <li key={bill.id} className="flex gap-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 dark:bg-red-900/30 text-red-500">
+                    <Receipt size={16} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 break-words text-sm font-medium text-gray-900 dark:text-gray-100">{bill.name}</p>
+                      <span className="shrink-0 text-sm font-medium text-gray-900 dark:text-gray-100">{formatCurrency(bill.amount, bill.currency || currency)}</span>
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{bill.name}</p>
-                      <div className="mt-0.5 flex items-center gap-1.5">
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
                         <p className="text-xs text-gray-400 dark:text-gray-500">
                           {new Date(bill.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </p>
@@ -280,16 +400,13 @@ export default function DashboardPage() {
                           <span className="rounded-full bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Overdue</span>
                         )}
                       </div>
+                      <button
+                        onClick={() => handlePayBill(bill)}
+                        className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-3 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
+                      >
+                        Pay
+                      </button>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{formatCurrency(bill.amount, bill.currency || currency)}</span>
-                    <button
-                      onClick={() => handlePayBill(bill)}
-                      className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
-                    >
-                      Pay
-                    </button>
                   </div>
                 </li>
               ))}
@@ -297,23 +414,20 @@ export default function DashboardPage() {
           ) : (
             <EmptyChartState label="No bills due soon" compact />
           )}
-          {upcomingBills && upcomingBills.length > 2 && (
-            <Link href="/bills" className="mt-2 block text-xs font-medium text-gray-400 dark:text-gray-500 hover:text-emerald-600 dark:hover:text-emerald-400">
-              +{upcomingBills.length - 2} more due soon
-            </Link>
-          )}
+          </ScrollFadeBox>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[300px]">
           <CardHeader
             icon={Target}
             color="violet"
             title="Goal Progress"
             action={<Link href="/goals" className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">See all</Link>}
           />
+          <ScrollFadeBox className="pr-1">
           {goals && goals.length > 0 ? (
             <ul className="space-y-4">
-              {goals.slice(0, 2).map((goal) => (
+              {goals.map((goal) => (
                 <li key={goal.id}>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{goal.name}</span>
@@ -336,62 +450,9 @@ export default function DashboardPage() {
           ) : (
             <EmptyChartState label="No savings goals yet" compact />
           )}
-          {goals && goals.length > 2 && (
-            <Link href="/goals" className="mt-2 block text-xs font-medium text-gray-400 dark:text-gray-500 hover:text-emerald-600 dark:hover:text-emerald-400">
-              +{goals.length - 2} more goals
-            </Link>
-          )}
-        </div>
-
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <CardHeader
-            icon={PieIcon}
-            color="amber"
-            title="Asset Allocation"
-            subtitle={allocation?.asOf
-              ? `As of ${new Date(`${allocation.asOf}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
-              : 'Now'}
-          />
-          {allocation && allocation.allocation.length > 0 ? (
-            <div className="flex items-center gap-3">
-              <div className="h-24 w-24 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={allocationSlices}
-                      dataKey="amount"
-                      nameKey="type"
-                      innerRadius={28}
-                      outerRadius={45}
-                      paddingAngle={3}
-                      cornerRadius={3}
-                    >
-                      {allocationSlices.map((entry) => (
-                        <Cell key={entry.type} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <ul className="min-w-0 flex-1 space-y-1.5">
-                {allocationSlices.map((entry) => (
-                  <li key={entry.type} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="flex min-w-0 items-center gap-1.5 truncate text-gray-600 dark:text-gray-400">
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
-                      <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
-                    </span>
-                    <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <EmptyChartState label="No active accounts yet" />
-          )}
+          </ScrollFadeBox>
         </div>
       </div>
-
 
       <ConfirmDialog
         open={!!payingBill}

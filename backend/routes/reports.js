@@ -18,13 +18,29 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
 }))
 
 router.get('/expense-breakdown', asyncHandler(async (req, res) => {
-  const { startDate, endDate, categoryId } = req.query
+  const { startDate, endDate, categoryId, periodOffset } = req.query
   const breakdown = await reportsService.getExpenseBreakdown(req.userId, {
     startDate,
     endDate,
-    categoryId: categoryId ? Number(categoryId) : undefined
+    categoryId: categoryId ? Number(categoryId) : undefined,
+    periodOffset
   })
   res.json({ success: true, ...breakdown })
+}))
+
+router.get('/compare-cycles', asyncHandler(async (req, res) => {
+  const comparison = await reportsService.getCycleComparison(req.userId, { a: req.query.a, b: req.query.b })
+  res.json({ success: true, ...comparison })
+}))
+
+router.get('/currency-exposure', asyncHandler(async (req, res) => {
+  const exposure = await reportsService.getCurrencyExposure(req.userId, { sinceOffset: req.query.sinceOffset })
+  res.json({ success: true, ...exposure })
+}))
+
+router.get('/cycle-trend', asyncHandler(async (req, res) => {
+  const trend = await reportsService.getCycleTrend(req.userId, { periodOffset: req.query.periodOffset })
+  res.json({ success: true, ...trend })
 }))
 
 router.get('/trends', asyncHandler(async (req, res) => {
