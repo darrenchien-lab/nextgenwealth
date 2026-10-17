@@ -98,11 +98,19 @@ function PurchaseSummary({ quantity, price, totalPaid, currency, accountName, cl
 
 // Plain-language stand-ins for the backend's literal validation wording,
 // caught here before the request goes out (same reasoning as other pages).
+const PAYMENT_REQUIRED = 'Select a funding account, or "Other (not tracked in this app)".'
+const PAY_SELECT_BASE = 'w-full min-w-0 rounded-lg border bg-white px-3 py-2 text-sm text-gray-900 transition-colors duration-150 dark:bg-gray-800 dark:text-gray-100'
+const PAY_SELECT_OK = 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
+const PAY_SELECT_MISSING = 'animate-shake border-red-500 ring-2 ring-red-500/30 dark:border-red-400'
+// '' = not chosen yet, 'none' = not paid from a tracked account, else an account id.
+const paymentAccountId = (value) => (value && value !== 'none' ? Number(value) : undefined)
+
 function validateHoldingForm(f) {
   if (!f.assetName.trim()) return 'Please enter an asset name.'
   if (!f.assetType) return 'Please choose an asset type.'
   if (!f.quantity || !(Number(f.quantity) > 0)) return 'Please enter a valid quantity.'
   if (!f.currency) return 'Please choose a currency.'
+  if (!f.accountId) return PAYMENT_REQUIRED
   return purchaseError(f.quantity, f.price, f.totalSpent)
 }
 
@@ -144,6 +152,12 @@ export default function InvestmentsPage() {
   const [accounts, setAccounts] = useState([])
   const [form, setForm] = useState(emptyForm())
   const [formError, setFormError] = useState('')
+  // Count of saves tried without a payment account (0 = none yet); it also
+  // keys the select so the shake replays on every try.
+  const [paymentMissing, setPaymentMissing] = useState(0)
+  const [addPaymentMissing, setAddPaymentMissing] = useState(0)
+  const paymentSelectRef = useRef(null)
+  const addPaymentSelectRef = useRef(null)
 
   const [editingHoldingId, setEditingHoldingId] = useState(null)
   // Same idea as the Accounts page's Transfers card: Transaction History is
@@ -269,7 +283,14 @@ export default function InvestmentsPage() {
     e.preventDefault()
     setFormError('')
     const validationMessage = validateHoldingForm(form)
-    if (validationMessage) { setFormError(validationMessage); return }
+    if (validationMessage) {
+      setFormError(validationMessage)
+      if (!form.accountId) {
+        setPaymentMissing((n) => n + 1)
+        setTimeout(() => paymentSelectRef.current?.focus(), 0)
+      }
+      return
+    }
     try {
       await request('/investments', {
         method: 'POST',
@@ -282,10 +303,11 @@ export default function InvestmentsPage() {
           price: Number(form.price),
           category: form.category.trim() || undefined,
           purchasedAt: form.purchasedAt || undefined,
-          accountId: form.accountId ? Number(form.accountId) : undefined
+          accountId: paymentAccountId(form.accountId)
         })
       })
       setForm(emptyForm())
+      setPaymentMissing(0)
       setShowForm(false)
       loadPortfolio()
       loadTransactions()
@@ -305,6 +327,7 @@ export default function InvestmentsPage() {
     : []
 
   function openEdit(holding) {
+    setAddPaymentMissing(0)
     setEditingHoldingId(holding.id)
     setEditError('')
     setEditForm({
@@ -382,9 +405,13 @@ export default function InvestmentsPage() {
 
   async function handleAddToHolding() {
     setEditError('')
-    const addError = purchaseError(editForm.addQty, editForm.addPrice, editForm.addTotalSpent)
+    const addError = purchaseError(editForm.addQty, editForm.addPrice, editForm.addTotalSpent) || (editForm.addAccountId ? null : PAYMENT_REQUIRED)
     if (addError) {
       setEditError(addError)
+      if (!editForm.addAccountId) {
+        setAddPaymentMissing((n) => n + 1)
+        setTimeout(() => addPaymentSelectRef.current?.focus(), 0)
+      }
       return
     }
     try {
@@ -394,7 +421,7 @@ export default function InvestmentsPage() {
           quantity: Number(editForm.addQty),
           totalSpent: purchaseBreakdown(editForm.addQty, editForm.addPrice, editForm.addTotalSpent).total,
           price: Number(editForm.addPrice),
-          accountId: editForm.addAccountId ? Number(editForm.addAccountId) : undefined,
+          accountId: paymentAccountId(editForm.addAccountId),
           date: editForm.addDate || undefined
         })
       })
@@ -440,7 +467,7 @@ export default function InvestmentsPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400">Track your holdings and portfolio performance.</p>
         </div>
         <button
-          onClick={() => { setForm(emptyForm()); setFormError(''); setShowForm((v) => !v) }}
+          onClick={() => { setForm(emptyForm()); setFormError(''); setPaymentMissing(0); setShowForm((v) => !v) }}
           className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md"
         >
           {showForm ? 'Cancel' : <><Plus size={15} /> Add Holding</>}
@@ -499,17 +526,23 @@ export default function InvestmentsPage() {
               title="Purchase date (optional, but needed to compute portfolio CAGR)"
               className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
             />
+            <div>
             <select
+              key={`pay-${paymentMissing}`}
+              ref={paymentSelectRef}
               value={form.accountId}
-              onChange={(e) => setForm({ ...form, accountId: e.target.value })}
-              title="Optional — deducts the total cost from this account's balance automatically"
-              className="rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm"
+              onChange={(e) => { setForm({ ...form, accountId: e.target.value }); setPaymentMissing(0) }}
+              title="The total paid is taken from this account's balance. Choose 'Other' for a holding bought with money not tracked in this app, e.g. before you started using it."
+              className={`${PAY_SELECT_BASE} ${paymentMissing && !form.accountId ? PAY_SELECT_MISSING : PAY_SELECT_OK}`}
             >
-              <option value="">Pay from account (opt.)</option>
+              <option value="" disabled className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Select funding account</option>
               {accounts.filter((a) => !a.is_archived && a.currency === form.currency).map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
+                <option key={a.id} value={a.id} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{a.name}</option>
               ))}
+              <option value="none" className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Other (not tracked in this app)</option>
             </select>
+            {paymentMissing > 0 && !form.accountId && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">Select the account used for this purchase</p>}
+            </div>
             <PurchaseSummary
               quantity={form.quantity}
               price={form.price}
@@ -964,17 +997,23 @@ export default function InvestmentsPage() {
                     className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
                   />
                   <input type="date" title="Date of this purchase" value={editForm.addDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, addDate: e.target.value })} className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
+                  <div className="col-span-2 min-w-0">
                   <select
+                    key={`add-pay-${addPaymentMissing}`}
+                    ref={addPaymentSelectRef}
                     value={editForm.addAccountId}
-                    onChange={(e) => setEditForm({ ...editForm, addAccountId: e.target.value })}
-                    title="Optional — deducts the total spent from this account's balance automatically"
-                    className="col-span-2 min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
+                    onChange={(e) => { setEditForm({ ...editForm, addAccountId: e.target.value }); setAddPaymentMissing(0) }}
+                    title="The total paid is taken from this account's balance. Choose 'Other' only for money not tracked in this app."
+                    className={`${PAY_SELECT_BASE} ${addPaymentMissing && !editForm.addAccountId ? PAY_SELECT_MISSING : PAY_SELECT_OK}`}
                   >
-                    <option value="">Pay from account (optional)</option>
+                    <option value="" disabled className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Select funding account</option>
                     {accounts.filter((a) => !a.is_archived && a.currency === editingHolding.currency).map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
+                      <option key={a.id} value={a.id} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{a.name}</option>
                     ))}
+                    <option value="none" className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Other (not tracked in this app)</option>
                   </select>
+                  {addPaymentMissing > 0 && !editForm.addAccountId && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">Select the account used for this purchase</p>}
+                  </div>
                 </div>
                 <PurchaseSummary
                   quantity={editForm.addQty}
