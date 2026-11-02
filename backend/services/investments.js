@@ -193,6 +193,10 @@ const getHoldingDetail = async (userId, id) => {
     currency: holding.currency,
     purchasedAt: holding.purchased_at,
     isClosed: holding.is_closed,
+    priceSource: holding.price_source || null,
+    priceSymbol: holding.price_symbol || null,
+    priceUpdatedAt: holding.price_updated_at || null,
+    priceError: holding.price_error || null,
     quantity,
     currentPrice,
     value,
@@ -377,39 +381,69 @@ const addToHolding = async (userId, id, { quantity, costBasis, totalSpent: total
   return updated
 }
 
-const removeHolding = async (userId, id, quantity, date) => {
+// Sells part or all of a holding. The sale can be given as the price per
+// unit and/or the total actually received (after the broker's fee and the
+// sales tax); without a price, the holding's last price is assumed. With
+// accountId, the money received is added to that account (same currency as
+// the holding), so net worth doesn't drop by what was sold. The realized
+// gain is what came in minus what those units cost, fees included.
+// The older positional form removeHolding(userId, id, quantity, date) still
+// works for scripts.
+const removeHolding = async (userId, id, input, legacyDate) => {
+  const { quantity, price, totalReceived, accountId, date } = (input !== null && typeof input === 'object')
+    ? input
+    : { quantity: input, date: legacyDate }
   const tradeTime = resolveTradeTime(date)
   const numericQuantity = Number(quantity)
   if (!(numericQuantity > 0)) throw badRequest('quantity must be a positive number')
+  const hasPrice = price !== undefined && price !== null && price !== ''
+  if (hasPrice && !(Number(price) > 0)) throw badRequest('price must be a positive number')
+  if (hasPrice) assertValidPrice(Number(price), 'price')
+  const hasTotal = totalReceived !== undefined && totalReceived !== null && totalReceived !== ''
+  if (hasTotal && !(Number(totalReceived) >= 0)) throw badRequest('totalReceived cannot be negative')
   const holding = await getHoldingById(userId, id)
-  if (numericQuantity > Number(holding.quantity)) {
-    throw badRequest('Cannot remove more than the quantity currently held')
+  if (numericQuantity > Number(holding.quantity) + 1e-8) {
+    throw badRequest('Cannot sell more than the quantity currently held')
   }
 
-  const remaining = Number(holding.quantity) - numericQuantity
+  let account = null
+  if (accountId !== undefined && accountId !== null && accountId !== '') {
+    account = await accountsService.getAccountById(userId, accountId)
+    if (account.currency !== holding.currency) {
+      throw badRequest(`The receiving account is in ${account.currency}, but this holding is in ${holding.currency} — pick an account in ${holding.currency}`)
+    }
+  }
+
+  const remaining = Math.max(0, Number(holding.quantity) - numericQuantity)
   const costBasisPerUnit = Number(holding.cost_basis_total) / Number(holding.quantity)
-  // Assumes current_price is what this quantity was actually sold at —
-  // there's no separate "sold at" input, so update the price first if it
-  // needs to reflect the real sale price before removing.
-  const salePricePerUnit = Number(holding.current_price)
-  const saleProceeds = numericQuantity * salePricePerUnit
-  const realizedGain = (salePricePerUnit - costBasisPerUnit) * numericQuantity
+  const salePricePerUnit = hasPrice ? Number(price) : (hasTotal ? Number(totalReceived) / numericQuantity : Number(holding.current_price))
+  const saleProceeds = roundCents(hasTotal ? Number(totalReceived) : numericQuantity * salePricePerUnit)
+  // Fee and tax on the sale: the gap between quantity × price and what came in.
+  const fee = hasPrice && hasTotal ? Math.max(0, roundCents(numericQuantity * salePricePerUnit - saleProceeds)) : null
+  const realizedGain = saleProceeds - costBasisPerUnit * numericQuantity
 
   const updated = await withTransaction(async (client) => {
     const remainingFees = roundCents(Number(holding.fees_total) * (remaining / Number(holding.quantity)))
     const result = await client.query(SQL.removeQuantity, [remaining, remaining * costBasisPerUnit, remaining === 0, remainingFees, holding.id])
+    if (account) {
+      await accountsService.applyBalanceDelta(client, account.id, saleProceeds)
+    }
     await logInvestmentTransaction(client, {
       userId, holdingId: holding.id, assetName: holding.asset_name, category: holding.category, type: 'sell',
       quantity: numericQuantity, pricePerUnit: salePricePerUnit, totalAmount: saleProceeds, currency: holding.currency,
-      realizedGain: Math.round(realizedGain * 100) / 100, occurredAt: tradeTime
+      realizedGain: roundCents(realizedGain), accountId: account?.id, occurredAt: tradeTime, fee
     })
     return result.rows[0]
   })
   await correctHistoryForTrade(userId, {
-    tradeTime, holding, valueDelta: -numericQuantity * salePricePerUnit, costDelta: -numericQuantity * costBasisPerUnit, cashDelta: 0
+    tradeTime,
+    holding,
+    valueDelta: -numericQuantity * (hasPrice ? salePricePerUnit : Number(holding.current_price)),
+    costDelta: -numericQuantity * costBasisPerUnit,
+    cashDelta: account ? saleProceeds : 0
   })
   await takeSnapshot(userId)
-  return updated
+  return { ...updated, sale: { quantity: numericQuantity, proceeds: saleProceeds, fee, realizedGain: roundCents(realizedGain) } }
 }
 
 // A simple, transparent estimate (not a rigorous money-weighted return) of

@@ -33,6 +33,11 @@ router.post('/prices/refresh', asyncHandler(async (req, res) => {
   res.json({ success: true, ...result })
 }))
 
+router.get('/:id/price-history', asyncHandler(async (req, res) => {
+  const history = await priceUpdates.getPriceHistory(req.userId, Number(req.params.id))
+  res.json({ success: true, ...history })
+}))
+
 router.put('/:id/price-source', asyncHandler(async (req, res) => {
   const holding = await priceUpdates.linkHolding(req.userId, Number(req.params.id), req.body || {})
   res.json({ success: true, holding })
@@ -94,7 +99,7 @@ router.post('/:id/add', asyncHandler(async (req, res) => {
 }))
 
 router.post('/:id/remove', asyncHandler(async (req, res) => {
-  const holding = await investmentsService.removeHolding(req.userId, Number(req.params.id), req.body?.quantity, req.body?.date)
+  const holding = await investmentsService.removeHolding(req.userId, Number(req.params.id), req.body || {})
   res.json({ success: true, holding })
 }))
 

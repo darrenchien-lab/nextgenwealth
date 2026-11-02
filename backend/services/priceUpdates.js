@@ -14,7 +14,9 @@ const SQL = {
   setPriceError: loadSql('investments/setPriceError'),
   listLinkedForUser: loadSql('investments/listLinkedForUser'),
   listOpenForUser: loadSql('investments/listOpenForUser'),
-  listUsersWithLinkedHoldings: loadSql('investments/listUsersWithLinkedHoldings')
+  listUsersWithLinkedHoldings: loadSql('investments/listUsersWithLinkedHoldings'),
+  listTradesForCost: loadSql('investments/listTradesForCost'),
+  getHoldingHistory: loadSql('investments/getHoldingHistory')
 }
 
 // Prices are only refreshed once they're older than this, on startup.
@@ -130,4 +132,67 @@ const refreshAllUsersPrices = async ({ onlyStale = false } = {}) => {
   }
 }
 
-module.exports = { searchMarket, suggestLinks, linkHolding, unlinkHolding, refreshUserPrices, refreshAllUsersPrices }
+const dayKey = (d) => d.toISOString().slice(0, 10)
+
+// A holding's price per unit day by day, in its own currency. Market-linked
+// holdings use the source's daily closes (going back before the app saved
+// anything, from a month before the first trade); others are worked out from
+// the saved daily values and the units held each day.
+const getPriceHistory = async (userId, holdingId) => {
+  const holding = await investmentsService.getHoldingById(userId, holdingId)
+  const trades = (await query(SQL.listTradesForCost, [userId])).rows.filter((t) => t.holding_id === holding.id)
+
+  if (holding.price_source) {
+    const start = trades.length > 0 ? new Date(`${trades[0].trade_date}T00:00:00Z`) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+    start.setUTCDate(start.getUTCDate() - 30)
+    const fiveYearsAgo = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000)
+    const fromDate = dayKey(start < fiveYearsAgo ? fiveYearsAgo : start)
+    try {
+      const history = await marketData.getHistory(holding.price_source, holding.price_symbol, fromDate)
+      let factor = 1
+      if (history.currency !== holding.currency) {
+        const converted = await currencyService.convertAmount(1_000_000, history.currency, holding.currency)
+        if (!converted.available) throw new Error(`No exchange rate from ${history.currency}`)
+        factor = converted.amount / 1_000_000
+      }
+      const points = history.points.map((p) => ({ date: p.date, price: Math.round(p.price * factor * 1e8) / 1e8 }))
+      if (points.length > 1) return { source: 'market', currency: holding.currency, points }
+    } catch {
+      // Falls back to the app's own saved values below.
+    }
+  }
+
+  // Units held at the end of each trade day, to divide each day's value by.
+  const steps = []
+  let quantity = 0
+  for (const t of trades) {
+    quantity += t.type === 'buy' ? Number(t.quantity) : -Number(t.quantity)
+    steps.push({ date: t.trade_date, quantity })
+  }
+  const unitsOn = (date) => {
+    let units = steps.length > 0 ? 0 : Number(holding.quantity)
+    for (const step of steps) {
+      if (step.date > date) break
+      units = step.quantity
+    }
+    return units
+  }
+  const snapshots = (await query(SQL.getHoldingHistory, [userId, holding.id])).rows
+  const byDate = new Map()
+  for (const row of snapshots) {
+    const units = unitsOn(row.snapshot_date)
+    if (row.display_currency !== holding.currency || !(units > 0)) continue
+    byDate.set(row.snapshot_date, Math.round((Number(row.total_value) / units) * 1e8) / 1e8)
+  }
+  // Each trade's own price is a real price on that day too (for a fund, its
+  // NAV), and the current price is today's — so a holding with few saved
+  // days still gets a line.
+  for (const t of trades) {
+    if (!byDate.has(t.trade_date) && Number(t.quantity) > 0) byDate.set(t.trade_date, Math.round((Number(t.total_amount) / Number(t.quantity)) * 1e8) / 1e8)
+  }
+  if (Number(holding.current_price) > 0) byDate.set(dayKey(new Date(Date.now() - new Date().getTimezoneOffset() * 60000)), Number(holding.current_price))
+  const points = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, price]) => ({ date, price }))
+  return { source: 'recorded', currency: holding.currency, points }
+}
+
+module.exports = { getPriceHistory, searchMarket, suggestLinks, linkHolding, unlinkHolding, refreshUserPrices, refreshAllUsersPrices }

@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ArrowLeft, Layers, Wallet, TrendingUp, Receipt, History, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, CalendarRange, CalendarDays } from 'lucide-react'
+import { ArrowLeft, Layers, Wallet, TrendingUp, Receipt, History, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, CalendarRange, CalendarDays, Tag, Calculator, Zap, AlertTriangle, Minus } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatQuantity } from '@/lib/format'
+import PriceHistoryChart from '@/components/PriceHistoryChart'
+import SellHoldingModal from '@/components/SellHoldingModal'
 import CardHeader from '@/components/CardHeader'
-import SummaryCard from '@/components/SummaryCard'
 
 const ASSET_TYPE_LABELS = { stock: 'Stock', mutual_fund: 'Mutual Fund', crypto: 'Crypto', etf: 'ETF', bond: 'Bond', gold: 'Gold', property: 'Property', other: 'Other' }
 
@@ -39,14 +40,34 @@ const defaultRange = () => {
 const shortDate = (key) => new Date(`${key}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
 const monthLabel = (key) => new Date(`${key}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
+// "Today 17:02", "Yesterday 17:00" or "12 Oct, 17:00".
+function formatUpdatedAt(value) {
+  const d = new Date(value)
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  const today = new Date()
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
+  if (d.toDateString() === today.toDateString()) return `Today ${time}`
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${time}`
+}
+
+const SOURCE_LABELS = { yahoo: 'Yahoo Finance', indodax: 'Indodax' }
+
 export default function HoldingDetailPage() {
   const { id } = useParams()
   const [holding, setHolding] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const [priceHistory, setPriceHistory] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  const [selling, setSelling] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+
   useEffect(() => {
     async function load() {
+      request(`/investments/${id}/price-history`).then(setPriceHistory).catch(() => setPriceHistory({ points: [] }))
+      request('/accounts').then((d) => setAccounts(d.accounts)).catch(() => {})
       try {
         const data = await request(`/investments/${id}/detail`)
         setHolding(data.holding)
@@ -57,7 +78,7 @@ export default function HoldingDetailPage() {
       }
     }
     load()
-  }, [id])
+  }, [id, reloadKey])
 
   const currency = holding?.currency
 
@@ -94,21 +115,26 @@ export default function HoldingDetailPage() {
         <Link href="/investments" className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400">
           <ArrowLeft size={14} /> Investments
         </Link>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">{holding ? holding.assetName : 'Holding'}</h1>
-            {holding && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {[ASSET_TYPE_LABELS[holding.assetType] || holding.assetType, holding.category, holding.currency, holding.isClosed ? 'Closed' : null].filter(Boolean).join(' · ')}
-              </p>
-            )}
-          </div>
-          {holding && (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Last price <span className="ml-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(holding.currentPrice, currency)}</span>
-            </p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">{holding ? holding.assetName : 'Holding'}</h1>
+          {holding && [...new Set([ASSET_TYPE_LABELS[holding.assetType] || holding.assetType, holding.category, holding.currency].filter(Boolean))].map((chip) => (
+            <span key={chip} className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">{chip}</span>
+          ))}
+          {holding?.isClosed && <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Closed</span>}
+          {holding && holding.quantity > 0 && (
+            <button onClick={() => setSelling(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-red-700">
+              <Minus size={15} strokeWidth={2.5} /> Sell
+            </button>
           )}
         </div>
+        {selling && holding && (
+          <SellHoldingModal
+            holding={{ id: holding.id, name: holding.assetName, currency: holding.currency, quantity: holding.quantity, currentPrice: holding.currentPrice, costBasisTotal: holding.costBasis }}
+            accounts={accounts}
+            onClose={() => setSelling(false)}
+            onSold={() => { setSelling(false); setReloadKey((k) => k + 1) }}
+          />
+        )}
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -116,11 +142,59 @@ export default function HoldingDetailPage() {
 
       {holding && (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <SummaryCard icon={Layers} color="slate" label="Quantity" value={formatQuantity(holding.quantity)} />
-            <SummaryCard icon={Wallet} color="blue" label="Value" value={formatCurrency(holding.value, currency)} />
-            <SummaryCard icon={TrendingUp} color={holding.unrealizedGain >= 0 ? 'emerald' : 'red'} label="Unrealized P/L (after fees)" value={signed(holding.unrealizedGain, currency)} change={holding.returnPercentage} />
-            <SummaryCard icon={Receipt} color="amber" label="Fees paid" value={formatCurrency(holding.feesTotal, currency)} />
+          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700">
+            <div className={`h-1 ${holding.unrealizedGain >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+            <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-[1fr_20rem]">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Market value</p>
+                <p className="mt-1 truncate text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">{formatCurrency(holding.value, currency)}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${holding.unrealizedGain >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                    {holding.unrealizedGain >= 0 ? <ArrowUpRight size={15} strokeWidth={2.5} /> : <ArrowDownRight size={15} strokeWidth={2.5} />}
+                    {holding.unrealizedGain >= 0 ? '+' : '−'}{formatCurrency(Math.abs(holding.unrealizedGain), currency)}
+                    {holding.returnPercentage !== null && <span className="font-medium opacity-80">· {holding.returnPercentage >= 0 ? '+' : '−'}{Math.abs(holding.returnPercentage)}%</span>}
+                  </span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500">Unrealized P&amp;L, after fees</span>
+                </div>
+                <p className="mt-4 flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {holding.priceError ? (
+                    <><AlertTriangle size={13} className="text-amber-500" /> Price not updated: {holding.priceError}</>
+                  ) : holding.priceSource ? (
+                    <><Zap size={13} className="text-emerald-500" /> Auto price · {holding.priceSymbol} on {SOURCE_LABELS[holding.priceSource] || holding.priceSource}{holding.priceUpdatedAt && <> · {formatUpdatedAt(holding.priceUpdatedAt)}</>}</>
+                  ) : (
+                    <>Price entered manually</>
+                  )}
+                </p>
+              </div>
+              <div className="flex flex-col justify-center gap-3 border-t border-gray-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0 dark:border-gray-700">
+                {[
+                  [Layers, 'Quantity', formatQuantity(holding.quantity)],
+                  [Tag, 'Last price', formatCurrency(holding.currentPrice, currency)],
+                  [Calculator, 'Average price', holding.averagePrice === null ? '-' : formatCurrency(holding.averagePrice, currency)],
+                  [Receipt, 'Fees paid', formatCurrency(holding.feesTotal, currency)]
+                ].map(([Icon, label, value]) => (
+                  <div key={label} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"><Icon size={14} className="text-gray-400 dark:text-gray-500" /> {label}</span>
+                    <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+            <CardHeader icon={TrendingUp} color="blue" title="Price history" subtitle={`Price per unit against what you paid${holding.priceSymbol ? ` · ${holding.priceSymbol}` : ''}`} />
+            {priceHistory === null ? (
+              <p className="py-10 text-center text-sm text-gray-400 dark:text-gray-500">Loading prices…</p>
+            ) : (
+              <PriceHistoryChart
+                points={priceHistory.points}
+                currency={priceHistory.currency || currency}
+                averagePrice={holding.averagePrice}
+                trades={holding.transactions}
+                source={priceHistory.source}
+              />
+            )}
           </div>
 
           <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">

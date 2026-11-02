@@ -164,3 +164,31 @@ test('investments: the actual return counts each purchase from its own date (XIR
   res = (await as.get('/investments/allocation-targets')).body
   assert.ok(Math.abs(res.actualXirr.xirr - 10) < 0.5, `expected about 10%, got ${res.actualXirr.xirr}`)
 })
+
+test('investments: a sale records the price and amount received, credits the receiving account and books the realized gain after fees', async () => {
+  const { as } = await createTestUser()
+  const rdn = (await as.post('/accounts').send({ name: 'RDN', type: 'bank', currency: 'IDR', balance: 2000000 })).body.account
+  const usd = (await as.post('/accounts').send({ name: 'USD cash', type: 'bank', currency: 'USD', balance: 10 })).body.account
+  const holding = (await as.post('/investments').send({
+    assetName: 'SELL', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 1001000, price: 10000, accountId: rdn.id
+  })).body.holding
+
+  // The account must be in the holding's currency, and you can't sell more than you hold.
+  assert.equal((await as.post(`/investments/${holding.id}/remove`).send({ quantity: 10, price: 12000, accountId: usd.id })).status, 400)
+  assert.equal((await as.post(`/investments/${holding.id}/remove`).send({ quantity: 101, price: 12000 })).status, 400)
+
+  const res = await as.post(`/investments/${holding.id}/remove`).send({ quantity: 40, price: 12000, totalReceived: 478800, accountId: rdn.id })
+  assert.equal(res.status, 200)
+  assert.equal(Number(res.body.holding.quantity), 60)
+  // Cost of 40 units, fee included: 1,001,000 × 40/100 = 400,400 → gain 78,400.
+  assert.equal(res.body.holding.sale.realizedGain, 78400)
+  assert.equal(res.body.holding.sale.fee, 1200)
+
+  const account = (await as.get(`/accounts/${rdn.id}/statement`)).body
+  assert.equal(account.account.balance, 2000000 - 1001000 + 478800)
+  assert.equal(account.entries.find((e) => e.source === 'investment_sell').amount, 478800)
+
+  const sell = (await as.get('/investments/transactions')).body.transactions.find((t) => t.type === 'sell')
+  assert.equal(Number(sell.price_per_unit), 12000)
+  assert.equal(Number(sell.total_amount), 478800)
+})

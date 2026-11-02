@@ -103,12 +103,60 @@ const indodaxQuote = async (pairId) => {
   }
 }
 
+// Daily closes since `fromDate` ('YYYY-MM-DD'), each dated in the exchange's
+// own time zone so a Jakarta close isn't filed under the previous UTC day.
+const yahooHistory = async (symbol, fromDate) => {
+  const from = Math.floor(new Date(`${fromDate}T00:00:00Z`).getTime() / 1000)
+  const to = Math.floor(Date.now() / 1000)
+  const data = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${from}&period2=${to}&interval=1d`)
+  const result = data.chart?.result?.[0]
+  if (!result?.timestamp) throw new Error(`No price history found for ${symbol}`)
+  const offset = Number(result.meta?.gmtoffset) || 0
+  const divisor = MINOR_UNITS[result.meta?.currency] ? 100 : 1
+  const closes = result.indicators?.quote?.[0]?.close || []
+  const points = []
+  result.timestamp.forEach((t, i) => {
+    if (closes[i] === null || closes[i] === undefined) return
+    points.push({ date: new Date((t + offset) * 1000).toISOString().slice(0, 10), price: closes[i] / divisor })
+  })
+  const currency = MINOR_UNITS[result.meta?.currency] || result.meta?.currency
+  return { currency: String(currency).toUpperCase(), points }
+}
+
+const indodaxHistory = async (pairId, fromDate) => {
+  const from = Math.floor(new Date(`${fromDate}T00:00:00Z`).getTime() / 1000)
+  const to = Math.floor(Date.now() / 1000)
+  const data = await fetchJson(`https://indodax.com/tradingview/history_v2?symbol=${encodeURIComponent(pairId.toUpperCase())}&tf=1D&from=${from}&to=${to}`)
+  if (!Array.isArray(data)) throw new Error(`No price history found for ${pairId}`)
+  return {
+    currency: 'IDR',
+    points: data
+      .filter((c) => Number(c.Close) > 0)
+      .map((c) => ({ date: new Date(c.Time * 1000).toISOString().slice(0, 10), price: Number(c.Close) }))
+  }
+}
+
 const SOURCES = {
-  yahoo: { quote: yahooQuote, search: yahooSearch, label: 'Yahoo Finance' },
-  indodax: { quote: indodaxQuote, search: indodaxSearch, label: 'Indodax' }
+  yahoo: { quote: yahooQuote, search: yahooSearch, history: yahooHistory, label: 'Yahoo Finance' },
+  indodax: { quote: indodaxQuote, search: indodaxSearch, history: indodaxHistory, label: 'Indodax' }
 }
 
 const isKnownSource = (source) => Boolean(SOURCES[source])
+
+// Past daily closes are the same for everyone and change once a day, so a
+// lookup is kept for an hour instead of asking the source on every page view.
+const HISTORY_CACHE_MS = 60 * 60 * 1000
+const historyCache = new Map()
+
+const getHistory = async (source, symbol, fromDate) => {
+  if (!SOURCES[source]) throw new Error(`Unknown price source: ${source}`)
+  const key = `${source}:${symbol}:${fromDate}`
+  const cached = historyCache.get(key)
+  if (cached && Date.now() - cached.at < HISTORY_CACHE_MS) return cached.value
+  const value = await SOURCES[source].history(symbol, fromDate)
+  historyCache.set(key, { at: Date.now(), value })
+  return value
+}
 
 const getQuote = async (source, symbol) => {
   if (!SOURCES[source]) throw new Error(`Unknown price source: ${source}`)
@@ -142,4 +190,4 @@ const search = async (query) => {
   return priced.filter(Boolean)
 }
 
-module.exports = { search, getQuote, isKnownSource, SOURCE_LABELS: { yahoo: 'Yahoo Finance', indodax: 'Indodax' } }
+module.exports = { search, getQuote, getHistory, isKnownSource, SOURCE_LABELS: { yahoo: 'Yahoo Finance', indodax: 'Indodax' } }

@@ -3,16 +3,17 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts'
-import { Pencil, X, Plus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers, Zap, RefreshCw } from 'lucide-react'
+import { Pencil, X, Plus, Minus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers, Zap, RefreshCw } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
 import TrendAreaChart from '@/components/TrendAreaChart'
 import CardHeader from '@/components/CardHeader'
-import ConfirmDialog from '@/components/ConfirmDialog'
-import SummaryCard from '@/components/SummaryCard'
+import SellHoldingModal from '@/components/SellHoldingModal'
+import BuyHoldingModal from '@/components/BuyHoldingModal'
 import MarketSearch from '@/components/MarketSearch'
 import AutoPriceReview from '@/components/AutoPriceReview'
+import PortfolioSummary from '@/components/PortfolioSummary'
 
 // Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
 // classes — these CSS variables (defined in globals.css) are the dark-mode
@@ -215,9 +216,7 @@ export default function InvestmentsPage() {
   // Count of saves tried without a payment account (0 = none yet); it also
   // keys the select so the shake replays on every try.
   const [paymentMissing, setPaymentMissing] = useState(0)
-  const [addPaymentMissing, setAddPaymentMissing] = useState(0)
   const paymentSelectRef = useRef(null)
-  const addPaymentSelectRef = useRef(null)
 
   const [editingHoldingId, setEditingHoldingId] = useState(null)
   // Same idea as the Accounts page's Transfers card: Transaction History is
@@ -249,9 +248,13 @@ export default function InvestmentsPage() {
     return () => observer.disconnect()
   }, [portfolio])
 
-  const [editForm, setEditForm] = useState({ name: '', price: '', purchasedAt: '', addQty: '', addTotalSpent: '', addPrice: '', addAccountId: '', addDate: '', removeQty: '', removeDate: '' })
+  const [editForm, setEditForm] = useState({ name: '', price: '' })
   const [editError, setEditError] = useState('')
-  const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [sellingHoldingId, setSellingHoldingId] = useState(null)
+  const [buyingHoldingId, setBuyingHoldingId] = useState(null)
+  // The open row menu: which holding, and where to draw it (fixed to the
+  // viewport so the table's horizontal scroll box can't clip it).
+  const [rowMenu, setRowMenu] = useState(null)
 
   const filteredHistory = useMemo(() => {
     const rows = applyChartRange(history, historyRange)
@@ -474,21 +477,12 @@ export default function InvestmentsPage() {
 
   function openEdit(holding) {
     setEditSearching(false)
-    setAddPaymentMissing(0)
     setEditingHoldingId(holding.id)
     setEditError('')
     setEditForm({
       name: holding.asset_name,
       price: Number(holding.current_price).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 8 }),
       category: holding.category || '',
-      purchasedAt: holding.purchased_at ? holding.purchased_at.slice(0, 10) : '',
-      addQty: '',
-      addTotalSpent: '',
-      addPrice: '',
-      addAccountId: '',
-      addDate: todayInputValue(),
-      removeQty: '',
-      removeDate: todayInputValue()
     })
   }
 
@@ -540,64 +534,12 @@ export default function InvestmentsPage() {
     }
   }
 
-  async function handleSavePurchasedAt() {
-    setEditError('')
-    try {
-      await request(`/investments/${editingHoldingId}/purchased-at`, { method: 'PATCH', body: JSON.stringify({ purchasedAt: editForm.purchasedAt || null }) })
-      await refreshEdit()
-    } catch (err) {
-      setEditError(err.message || 'Failed to update purchase date')
-    }
+  function openBuy(holding) {
+    setBuyingHoldingId(holding.id)
   }
 
-  async function handleAddToHolding() {
-    setEditError('')
-    const addError = purchaseError(editForm.addQty, editForm.addPrice, editForm.addTotalSpent) || (editForm.addAccountId ? null : PAYMENT_REQUIRED)
-    if (addError) {
-      setEditError(addError)
-      if (!editForm.addAccountId) {
-        setAddPaymentMissing((n) => n + 1)
-        setTimeout(() => addPaymentSelectRef.current?.focus(), 0)
-      }
-      return
-    }
-    try {
-      await request(`/investments/${editingHoldingId}/add`, {
-        method: 'POST',
-        body: JSON.stringify({
-          quantity: Number(editForm.addQty),
-          totalSpent: purchaseBreakdown(editForm.addQty, editForm.addPrice, editForm.addTotalSpent).total,
-          price: Number(editForm.addPrice),
-          accountId: paymentAccountId(editForm.addAccountId),
-          date: editForm.addDate || undefined
-        })
-      })
-      setEditForm({ ...editForm, addQty: '', addTotalSpent: '', addPrice: '', addAccountId: '', addDate: todayInputValue() })
-      await refreshEdit()
-    } catch (err) {
-      setEditError(err.message || 'Failed to add to holding')
-    }
-  }
-
-  async function confirmRemove() {
-    setConfirmingRemove(false)
-    setEditError('')
-    try {
-      await request(`/investments/${editingHoldingId}/remove`, { method: 'POST', body: JSON.stringify({ quantity: Number(editForm.removeQty || 0), date: editForm.removeDate || undefined }) })
-      setEditForm({ ...editForm, removeQty: '', removeDate: todayInputValue() })
-      await refreshEdit()
-    } catch (err) {
-      setEditError(err.message || 'Failed to remove holding')
-    }
-  }
-
-  function handleRemoveClick() {
-    setEditError('')
-    if (!editForm.removeQty || !(Number(editForm.removeQty) > 0)) {
-      setEditError('Please enter a valid quantity to remove.')
-      return
-    }
-    setConfirmingRemove(true)
+  function openSell(holdingId) {
+    setSellingHoldingId(holdingId)
   }
 
   const holdingColors = buildHoldingColors(holdingsHistory?.series || [])
@@ -714,7 +656,7 @@ export default function InvestmentsPage() {
                     <input type="number" step="any" min="0" value={form.totalSpent} onChange={(e) => setForm({ ...form, totalSpent: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm" />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400" title="Needed to compute portfolio CAGR">Purchase date</label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400" title="The date of this purchase — it is recorded as the first buy in the holding's history">Purchase date</label>
                     <input type="date" value={form.purchasedAt} max={todayInputValue()} onChange={(e) => setForm({ ...form, purchasedAt: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm" />
                   </div>
                   <div>
@@ -773,16 +715,7 @@ export default function InvestmentsPage() {
         <p className="text-sm text-gray-500 dark:text-gray-400">Loading portfolio...</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <SummaryCard icon={Wallet} color="blue" label="Total Value" value={formatCurrency(portfolio.totalValue, portfolio.displayCurrency)} />
-            <SummaryCard icon={Landmark} color="slate" label="Total Cost Basis" value={formatCurrency(portfolio.totalCostBasis, portfolio.displayCurrency)} />
-            <SummaryCard
-              icon={TrendingUp}
-              color={portfolio.totalUnrealizedGain >= 0 ? 'emerald' : 'red'}
-              label="Unrealized Gain"
-              value={formatCurrency(portfolio.totalUnrealizedGain, portfolio.displayCurrency)}
-            />
-          </div>
+          <PortfolioSummary portfolio={portfolio} />
 
           <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
             <CardHeader
@@ -827,6 +760,30 @@ export default function InvestmentsPage() {
                 </div>
               )}
             />
+            {(() => {
+              // With one holding picked, its value now heads the chart, like
+              // the portfolio total does in the summary above.
+              const picked = historyHoldingId && portfolio.holdings.find((h) => String(h.id) === historyHoldingId)
+              if (!picked || picked.currentValue === null) return null
+              const gain = picked.unrealizedGain
+              const cost = picked.currentValue - gain
+              const pct = cost > 0 ? Math.round((gain / cost) * 1000) / 10 : null
+              return (
+                <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-1">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">{picked.asset_name} · Market value</p>
+                    <p className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">{formatCurrency(picked.currentValue, portfolio.displayCurrency)}</p>
+                  </div>
+                  {gain !== null && (
+                    <span className={`mb-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${gain >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                      {gain >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+                      {gain >= 0 ? '+' : '−'}{formatCurrency(Math.abs(gain), portfolio.displayCurrency)}{pct !== null && ` · ${gain >= 0 ? '+' : '−'}${Math.abs(pct)}%`}
+                    </span>
+                  )}
+                  <Link href={`/investments/${picked.id}`} className="mb-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">View details →</Link>
+                </div>
+              )
+            })()}
             {filteredHistory && filteredHistory.length > 1 ? (
               // Brush (Recharts' built-in zoom/pan slider) replaces the old
               // drag-to-scroll wrapper — drag its handles to zoom into a
@@ -838,8 +795,7 @@ export default function InvestmentsPage() {
                 name="Market value"
                 description="what it's worth at market price"
                 secondary={{ dataKey: 'totalCostBasis', name: 'Capital invested', description: 'the money you put in, fees included', color: '#3b82f6', solid: true }}
-                hint="Both lines rise together when you buy more; the gap between them is your profit, and it only changes when prices move. Dots mark days with a buy or sell."
-                markerKey="trades"
+                hint="Both lines rise together when you buy more; the gap between them is your profit, and it only changes when prices move."
                 tooltipExtra={(row) => {
                   const lines = []
                   if (row.totalCostBasis !== null && row.totalCostBasis !== undefined) {
@@ -850,7 +806,7 @@ export default function InvestmentsPage() {
                   return lines
                 }}
                 formatValue={(value) => formatCurrency(value, portfolio.displayCurrency)}
-                formatAxisValue={formatNumber}
+                formatAxisValue={(v) => formatNumber(Math.round(v))}
               />
             ) : (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
@@ -996,14 +952,14 @@ export default function InvestmentsPage() {
                         <tr key={h.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/60">
                           <td className="px-3 py-2">
                             <span className="inline-flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100">
-                              <TypeIcon size={14} className="shrink-0 text-gray-400 dark:text-gray-500" />
+                              <span title={ASSET_TYPE_LABELS[h.asset_type] || h.asset_type} className="shrink-0"><TypeIcon size={14} className="text-gray-400 dark:text-gray-500" /></span>
                               <Link href={`/investments/${h.id}`} title="View details" className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{h.asset_name}</Link>
-                              <span className="text-xs font-normal text-gray-400 dark:text-gray-500">({ASSET_TYPE_LABELS[h.asset_type] || h.asset_type})</span>
                             </span>
+                            <span className="block pl-[22px] text-xs text-gray-400 dark:text-gray-500">{ASSET_TYPE_LABELS[h.asset_type] || h.asset_type}</span>
                           </td>
                           <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatQuantity(h.quantity)}</td>
                           <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                            <span className="mr-1.5">{formatCurrency(h.current_price, h.currency)}</span>
+                            <span className="block whitespace-nowrap">{formatCurrency(h.current_price, h.currency)}</span>
                             <PriceBadge holding={h} />
                           </td>
                           <td className="px-3 py-2 text-gray-900 dark:text-gray-100">
@@ -1016,9 +972,21 @@ export default function InvestmentsPage() {
                           <td title="Return without fees, like your broker app shows — open the holding for the return after fees" className={`px-3 py-2 font-medium ${h.returnPercentageExcludingFees === null ? 'text-gray-400 dark:text-gray-500' : h.returnPercentageExcludingFees >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                             {h.returnPercentageExcludingFees === null ? 'N/A' : `${h.returnPercentageExcludingFees >= 0 ? '+' : ''}${h.returnPercentageExcludingFees}%`}
                           </td>
-                          <td className="px-3 py-2 text-right">
-                            <button onClick={() => openEdit(h)} title="Edit holding" className="rounded-md p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-150 hover:scale-110 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300">
-                              <Pencil size={17} />
+                          <td className="whitespace-nowrap px-3 py-2 text-right">
+                            <button
+                              onClick={(e) => {
+                                const r = e.currentTarget.getBoundingClientRect()
+                                setRowMenu(rowMenu?.id === h.id ? null : { id: h.id, top: r.bottom + 4, right: window.innerWidth - r.right })
+                              }}
+                              title="Buy or sell"
+                              aria-label={`Buy or sell ${h.asset_name}`}
+                              aria-expanded={rowMenu?.id === h.id}
+                              className={`inline-flex items-center gap-0.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors duration-150 ${rowMenu?.id === h.id ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'border-gray-300 text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-gray-600 dark:text-gray-200 dark:hover:border-blue-700 dark:hover:bg-blue-900/30 dark:hover:text-blue-300'}`}
+                            >
+                              Trade <ChevronDown size={13} className={`transition-transform duration-150 ${rowMenu?.id === h.id ? 'rotate-180' : ''}`} />
+                            </button>
+                            <button onClick={() => openEdit(h)} title="Edit holding" aria-label={`Edit ${h.asset_name}`} className="ml-0.5 rounded-md p-1 align-middle text-gray-400 transition-all duration-150 hover:scale-110 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-300">
+                              <Pencil size={16} />
                             </button>
                           </td>
                         </tr>
@@ -1221,77 +1189,6 @@ export default function InvestmentsPage() {
                   <button onClick={handleSaveCategory} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
                 </div>
               </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400" title="Used to compute portfolio CAGR">First Purchase Date</label>
-                <div className="flex gap-2">
-                  <input type="date" value={editForm.purchasedAt} onChange={(e) => setEditForm({ ...editForm, purchasedAt: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <button onClick={handleSavePurchasedAt} className="rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-gray-900 dark:bg-gray-600 dark:hover:bg-gray-500">Save</button>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Add Quantity (e.g. monthly top-up / DCA)</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="number" step="any" min="0" placeholder="Quantity" value={editForm.addQty} onChange={(e) => setEditForm({ ...editForm, addQty: e.target.value })} className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <input
-                    type="number"
-                    step="any"
-                    min="0"
-                    placeholder={`Price per unit (${editingHolding.currency})`}
-                    title="The price per unit on your trade confirmation, before fees"
-                    value={editForm.addPrice}
-                    onChange={(e) => setEditForm({ ...editForm, addPrice: e.target.value })}
-                    className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
-                  />
-                  <input
-                    type="number"
-                    step="any"
-                    min="0"
-                    placeholder="Total incl. fee (opt.)"
-                    title="What actually left your account, fees included. Leave empty if there was no fee."
-                    value={editForm.addTotalSpent}
-                    onChange={(e) => setEditForm({ ...editForm, addTotalSpent: e.target.value })}
-                    className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
-                  />
-                  <input type="date" title="Date of this purchase" value={editForm.addDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, addDate: e.target.value })} className="min-w-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <div className="col-span-2 min-w-0">
-                  <select
-                    key={`add-pay-${addPaymentMissing}`}
-                    ref={addPaymentSelectRef}
-                    value={editForm.addAccountId}
-                    onChange={(e) => { setEditForm({ ...editForm, addAccountId: e.target.value }); setAddPaymentMissing(0) }}
-                    title="The total paid is taken from this account's balance. Choose 'Other' only for money not tracked in this app."
-                    className={`${PAY_SELECT_BASE} ${addPaymentMissing && !editForm.addAccountId ? PAY_SELECT_MISSING : PAY_SELECT_OK}`}
-                  >
-                    <option value="" disabled className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Select funding account</option>
-                    {accounts.filter((a) => !a.is_archived && a.currency === editingHolding.currency).map((a) => (
-                      <option key={a.id} value={a.id} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{a.name}</option>
-                    ))}
-                    <option value="none" className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Other (not tracked in this app)</option>
-                  </select>
-                  {addPaymentMissing > 0 && !editForm.addAccountId && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">Select the account used for this purchase</p>}
-                  </div>
-                </div>
-                <PurchaseSummary
-                  quantity={editForm.addQty}
-                  price={editForm.addPrice}
-                  totalPaid={editForm.addTotalSpent}
-                  currency={editingHolding.currency}
-                  accountName={editForm.addAccountId ? accounts.find((a) => a.id === Number(editForm.addAccountId))?.name : null}
-                  className="mt-1 text-xs text-gray-500 dark:text-gray-400"
-                />
-                <button onClick={handleAddToHolding} className="mt-2 w-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-emerald-700">Add</button>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Remove Quantity (e.g. on sale)</label>
-                <div className="flex gap-2">
-                  <input type="number" step="any" placeholder="Qty" value={editForm.removeQty} onChange={(e) => setEditForm({ ...editForm, removeQty: e.target.value })} className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <input type="date" title="Date of this sale" value={editForm.removeDate} max={todayInputValue()} onChange={(e) => setEditForm({ ...editForm, removeDate: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm" />
-                  <button onClick={handleRemoveClick} className="rounded-lg bg-red-500 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-red-600">Remove</button>
-                </div>
-              </div>
             </div>
 
             <button onClick={closeEdit} className="mt-5 w-full rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700 py-2 text-sm font-medium">
@@ -1301,14 +1198,51 @@ export default function InvestmentsPage() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmingRemove}
-        title="Remove this quantity?"
-        message={editingHolding && `This removes ${editForm.removeQty} unit(s) of ${editingHolding.asset_name}${Number(editForm.removeQty) >= Number(editingHolding.quantity) ? ' — closing out the entire holding' : ''}. This can't be undone.`}
-        confirmLabel="Remove"
-        onConfirm={confirmRemove}
-        onCancel={() => setConfirmingRemove(false)}
-      />
+      {rowMenu && (() => {
+        const h = portfolio?.holdings.find((x) => x.id === rowMenu.id)
+        if (!h) return null
+        const canSell = Number(h.quantity) > 0
+        const item = 'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors duration-100'
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setRowMenu(null)} onWheel={() => setRowMenu(null)} onTouchMove={() => setRowMenu(null)} />
+            <div role="menu" style={{ top: rowMenu.top, right: rowMenu.right }} className="fixed z-50 w-40 overflow-hidden rounded-xl bg-white py-1 shadow-lg ring-1 ring-gray-200 dark:bg-gray-800 dark:ring-gray-700">
+              <button role="menuitem" onClick={() => { setRowMenu(null); openBuy(h) }} className={`${item} text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 dark:text-gray-200 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-400`}>
+                <Plus size={16} className="text-emerald-600 dark:text-emerald-400" /> Buy
+              </button>
+              <button role="menuitem" disabled={!canSell} onClick={() => { setRowMenu(null); openSell(h.id) }} className={`${item} text-gray-700 enabled:hover:bg-red-50 enabled:hover:text-red-700 disabled:opacity-40 dark:text-gray-200 dark:enabled:hover:bg-red-900/30 dark:enabled:hover:text-red-400`}>
+                <Minus size={16} className="text-red-600 dark:text-red-400" /> Sell
+              </button>
+            </div>
+          </>
+        )
+      })()}
+
+      {buyingHoldingId && (() => {
+        const h = portfolio?.holdings.find((x) => x.id === buyingHoldingId)
+        if (!h) return null
+        return (
+          <BuyHoldingModal
+            holding={{ id: h.id, name: h.asset_name, currency: h.currency, quantity: h.quantity, currentPrice: h.current_price, costBasisTotal: h.cost_basis_total }}
+            accounts={accounts}
+            onClose={() => setBuyingHoldingId(null)}
+            onBought={() => { setBuyingHoldingId(null); loadPortfolio(); loadTransactions(); loadHistory() }}
+          />
+        )
+      })()}
+
+      {sellingHoldingId && (() => {
+        const h = portfolio?.holdings.find((x) => x.id === sellingHoldingId)
+        if (!h) return null
+        return (
+          <SellHoldingModal
+            holding={{ id: h.id, name: h.asset_name, currency: h.currency, quantity: h.quantity, currentPrice: h.current_price, costBasisTotal: h.cost_basis_total }}
+            accounts={accounts}
+            onClose={() => setSellingHoldingId(null)}
+            onSold={() => { setSellingHoldingId(null); loadPortfolio(); loadTransactions(); loadHistory() }}
+          />
+        )
+      })()}
     </div>
   )
 }
