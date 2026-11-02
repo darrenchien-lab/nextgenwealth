@@ -43,13 +43,15 @@ export default function SummaryCard({
           {hidden ? '••••••••' : value}
         </p>
       )}
-      {(hint || (change !== undefined && change !== null)) && !hidden && (
+      {/* A percentage change gives no amount away, so it stays visible when
+          the amount itself is masked. */}
+      {((hint && !hidden) || (change !== undefined && change !== null)) && (
         <div className="mt-0.5 flex items-center gap-1.5">
-          {hint && <p className="truncate text-xs text-gray-400 dark:text-gray-500">{hint}</p>}
+          {hint && !hidden && <p className="truncate text-xs text-gray-400 dark:text-gray-500">{hint}</p>}
           {change !== undefined && change !== null && (
             <span className={`inline-flex shrink-0 items-center gap-0.5 text-xs font-medium ${change >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
               {change >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {Math.abs(change)}{changeUnit}
+              {change > 0 ? '+' : change < 0 ? '−' : ''}{Math.abs(change)}{changeUnit}
             </span>
           )}
         </div>

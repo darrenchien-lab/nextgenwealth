@@ -204,6 +204,7 @@ export default function DashboardPage() {
           color="violet"
           label="Net Worth"
           value={formatCurrency(summary.netWorth, currency)}
+          hint="this cycle"
           change={changes?.netWorth}
           maskable
           hidden={hideAmounts}
