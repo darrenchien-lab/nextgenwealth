@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
-import { Plus, SlidersHorizontal, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Pencil, Trash2, Receipt, X, TrendingUp, TrendingDown, Scale, Tag, Split, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, SlidersHorizontal, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Pencil, Trash2, Receipt, X, TrendingUp, TrendingDown, Scale, Tag, Split, AlertTriangle, ChevronLeft, ChevronRight, CalendarRange, CalendarDays, RefreshCcw } from 'lucide-react'
 
 const TYPES = ['income', 'expense']
 
@@ -84,6 +85,26 @@ function shiftPeriod(period, months) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+// The latest end allowed for a range starting on `from`: one calendar month on.
+const oneMonthAfter = (from) => {
+  const d = new Date(`${from}T00:00:00`)
+  return dayKey(new Date(d.getFullYear(), d.getMonth() + 1, d.getDate()))
+}
+const defaultRange = () => {
+  const today = new Date()
+  return { from: dayKey(new Date(today.getFullYear(), today.getMonth() - 1, today.getDate())), to: dayKey(today) }
+}
+const currentMonthKey = () => dayKey(new Date()).slice(0, 7)
+// First and last day of a 'YYYY-MM' month.
+const monthBounds = (key) => {
+  const [year, month] = key.split('-').map(Number)
+  return { from: `${key}-01`, to: dayKey(new Date(year, month, 0)) }
+}
+const monthLabel = (key) => new Date(`${key}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+// The last three years of calendar months, newest first, for the month picker.
+const recentMonths = () => Array.from({ length: 36 }, (_, i) => shiftPeriod(currentMonthKey(), -i))
+
 const emptyForm = () => ({ accountId: '', categoryId: '', type: 'expense', amount: '', occurredAt: toDateInputValue(), notes: '', countInNextCycle: false })
 
 // Grouped by currency (via each transaction's account) rather than summed
@@ -108,7 +129,12 @@ export default function TransactionsPage() {
   const [filterError, setFilterError] = useState('')
 
   const [filters, setFilters] = useState({ startDate: '', endDate: '', accountId: '', categoryId: '', type: '' })
-  const [activeQuickRange, setActiveQuickRange] = useState(null)
+  // How the list is cut: one budget cycle (the default), a date range of up
+  // to one month, or one calendar month — the same Range/Month choice as a
+  // holding's transaction history.
+  const [mode, setMode] = useState('cycle')
+  const [range, setRange] = useState(defaultRange)
+  const [month, setMonth] = useState(currentMonthKey)
   // The list shows one budget cycle (the current one at first) unless a
   // date range is picked; cycle holds the shown cycle's key and label.
   const [period, setPeriod] = useState('current')
@@ -178,26 +204,45 @@ export default function TransactionsPage() {
     }
   }
 
-  // "30 days" is the widest a quick button can offer without exceeding the
-  // 1-month cap the manual date pickers are also held to.
-  function applyQuickRange(days) {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - (days - 1))
-    const nextFilters = { ...filters, startDate: toDateInputValue(start), endDate: toDateInputValue(end) }
-    setFilters(nextFilters)
-    setActiveQuickRange(days)
-    loadTransactions(nextFilters)
-  }
-
-  // Back to listing by budget cycle, dropping any picked date range.
+  // Back to listing by budget cycle, dropping any picked dates.
   function showCycle(nextPeriod) {
     const nextFilters = { ...filters, startDate: '', endDate: '' }
     setFilters(nextFilters)
-    setActiveQuickRange(null)
+    setMode('cycle')
     setPeriod(nextPeriod)
     loadTransactions(nextFilters, nextPeriod)
   }
+
+  function showRange(nextRange) {
+    setMode('range')
+    setRange(nextRange)
+    if (nextRange.from > nextRange.to || nextRange.to > oneMonthAfter(nextRange.from)) return
+    const nextFilters = { ...filters, startDate: nextRange.from, endDate: nextRange.to }
+    setFilters(nextFilters)
+    loadTransactions(nextFilters)
+  }
+
+  function showMonth(key) {
+    setMode('month')
+    setMonth(key)
+    const bounds = monthBounds(key)
+    const nextFilters = { ...filters, startDate: bounds.from, endDate: bounds.to }
+    setFilters(nextFilters)
+    loadTransactions(nextFilters)
+  }
+
+  function switchMode(next) {
+    if (next === mode) return
+    if (next === 'cycle') showCycle(period)
+    else if (next === 'range') showRange(range)
+    else showMonth(month)
+  }
+
+  const rangeError = mode === 'range'
+    ? (range.from > range.to ? 'The start date is after the end date.' : range.to > oneMonthAfter(range.from) ? 'Pick a range of up to one month.' : '')
+    : ''
+  const months = recentMonths()
+  const monthIndex = months.indexOf(month)
 
   useEffect(() => {
     // A link can open this page already filtered, e.g. the dashboard's
@@ -555,54 +600,66 @@ export default function TransactionsPage() {
           icon={SlidersHorizontal}
           color="slate"
           title="Filters"
-          subtitle="One budget cycle, or a date range of up to 1 month"
+          subtitle="One budget cycle, a date range of up to 1 month, or a calendar month"
           action={
-            <div className="flex gap-1 rounded-full bg-gray-100 dark:bg-gray-700 p-1">
-              <button
-                onClick={() => showCycle('current')}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition ${cycle && cycle.period === cycle.currentPeriod ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-              >
-                This Cycle
-              </button>
-              <button
-                onClick={() => applyQuickRange(7)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition ${activeQuickRange === 7 ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-              >
-                7 Days
-              </button>
-              <button
-                onClick={() => applyQuickRange(30)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition ${activeQuickRange === 30 ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-              >
-                30 Days
-              </button>
+            <div className="flex rounded-lg border border-gray-300 p-0.5 dark:border-gray-600">
+              {[['cycle', RefreshCcw, 'Cycle', 'Budget cycle'], ['range', CalendarRange, 'Range', 'Date range (up to 1 month)'], ['month', CalendarDays, 'Month', 'Calendar month']].map(([key, Icon, label, hint]) => (
+                <button
+                  key={key}
+                  onClick={() => switchMode(key)}
+                  title={hint}
+                  aria-label={hint}
+                  className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${mode === key ? 'bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                >
+                  <Icon size={14} /> <span className="hidden sm:inline">{label}</span>
+                </button>
+              ))}
             </div>
           }
         />
         <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-          {cycle ? (
+          {mode === 'cycle' && cycle && (
             <>
               <button onClick={() => showCycle(shiftPeriod(cycle.period, -1))} title="Previous cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
                 <ChevronLeft size={16} />
               </button>
               <span className="font-medium text-gray-700 dark:text-gray-300">{cycle.periodLabel}</span>
-              <button onClick={() => showCycle(shiftPeriod(cycle.period, 1))} title="Next cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
-                <ChevronRight size={16} />
-              </button>
+              {/* No cycle after the current one has happened yet. */}
+              {cycle.period !== cycle.currentPeriod && (
+                <button onClick={() => showCycle(shiftPeriod(cycle.period, 1))} title="Next cycle" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                  <ChevronRight size={16} />
+                </button>
+              )}
               {cycle.period === cycle.currentPeriod
                 ? <span className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">Current cycle</span>
                 : <button onClick={() => showCycle('current')} className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">Back to current cycle</button>}
             </>
-          ) : (
+          )}
+          {mode === 'range' && (
             <>
-              <span className="font-medium text-gray-700 dark:text-gray-300">Custom date range</span>
-              <button onClick={() => showCycle(period)} className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">Back to budget cycle</button>
+              <input type="date" value={range.from} max={range.to} onChange={(e) => e.target.value && showRange({ ...range, from: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+              –
+              <input type="date" value={range.to} min={range.from} max={oneMonthAfter(range.from)} onChange={(e) => e.target.value && showRange({ ...range, to: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+              {rangeError && <span className="text-xs font-medium text-red-600 dark:text-red-400">{rangeError}</span>}
+            </>
+          )}
+          {mode === 'month' && (
+            <>
+              <button onClick={() => showMonth(months[monthIndex + 1])} disabled={monthIndex >= months.length - 1} title="Previous month" className="rounded-md p-1 hover:bg-gray-100 disabled:opacity-30 dark:hover:bg-gray-700">
+                <ChevronLeft size={16} />
+              </button>
+              <select value={month} onChange={(e) => showMonth(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100">
+                {months.map((key) => <option key={key} value={key} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{monthLabel(key)}</option>)}
+              </select>
+              {monthIndex > 0 && (
+                <button onClick={() => showMonth(months[monthIndex - 1])} title="Next month" className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
+                  <ChevronRight size={16} />
+                </button>
+              )}
             </>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <input type="date" value={filters.startDate} onChange={(e) => { setFilters({ ...filters, startDate: e.target.value }); setActiveQuickRange(null) }} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
-          <input type="date" value={filters.endDate} onChange={(e) => { setFilters({ ...filters, endDate: e.target.value }); setActiveQuickRange(null) }} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <select value={filters.accountId} onChange={(e) => setFilters({ ...filters, accountId: e.target.value })} className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 transition-colors duration-150 hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2 text-sm">
             <option value="">All accounts</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -641,6 +698,7 @@ export default function TransactionsPage() {
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Category</th>
+                <th className="px-4 py-3">Account</th>
                 <th className="px-4 py-3">Amount</th>
                 <th className="px-4 py-3">Notes</th>
                 <th className="px-4 py-3"></th>
@@ -698,6 +756,11 @@ export default function TransactionsPage() {
                           — set category
                         </button>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                      {account ? (
+                        <Link href={`/accounts/${account.id}`} title="View this account's statement" className="hover:text-emerald-600 hover:underline dark:hover:text-emerald-400">{account.name}</Link>
+                      ) : '—'}
                     </td>
                     <td className={`px-4 py-3 font-medium ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-gray-100'}`}>
                       {isIncome ? '+' : '-'}{formatCurrency(txn.amount, account?.currency)}
