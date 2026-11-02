@@ -13,6 +13,8 @@ const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 
 const JWT_SECRET = process.env.JWT_SECRET
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h'
+// "Keep me signed in" on a personal device: a long-lived session instead.
+const JWT_REMEMBER_EXPIRES_IN = process.env.JWT_REMEMBER_EXPIRES_IN || '30d'
 const SALT_ROUNDS = 10
 
 const SQL = {
@@ -33,6 +35,34 @@ const SQL = {
   markVerificationTokenUsed: loadSql('auth/markVerificationTokenUsed'),
   getUserByEmailForResend: loadSql('auth/getUserByEmailForResend'),
   pruneExpiredEmailVerificationTokens: loadSql('auth/pruneExpiredEmailVerificationTokens')
+}
+
+// Repeated wrong passwords for one email from one address are refused for a
+// while, so a password can't be guessed by trying many in a row. Kept in
+// memory: enough for a single server, and a restart only resets the count.
+const MAX_FAILED_LOGINS = 5
+const LOCKOUT_MS = 15 * 60 * 1000
+const failedLogins = new Map()
+
+const attemptKey = (email, ip) => `${String(email || '').trim().toLowerCase()}|${ip || ''}`
+
+const assertNotLockedOut = (key) => {
+  const entry = failedLogins.get(key)
+  if (!entry) return
+  if (Date.now() - entry.firstAt > LOCKOUT_MS) {
+    failedLogins.delete(key)
+    return
+  }
+  if (entry.count >= MAX_FAILED_LOGINS) {
+    const minutes = Math.ceil((entry.firstAt + LOCKOUT_MS - Date.now()) / 60000)
+    throw new AppError(429, 'TOO_MANY_ATTEMPTS', `Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or reset your password.`)
+  }
+}
+
+const recordFailedLogin = (key) => {
+  const entry = failedLogins.get(key)
+  if (!entry || Date.now() - entry.firstAt > LOCKOUT_MS) failedLogins.set(key, { count: 1, firstAt: Date.now() })
+  else entry.count += 1
 }
 
 const isValidEmail = (email) => typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -63,30 +93,39 @@ const register = async ({ email, password }) => {
   return user
 }
 
-const issueTokenForUser = (userId) => {
+const issueTokenForUser = (userId, { rememberMe = false } = {}) => {
   const jti = crypto.randomUUID()
-  const token = jwt.sign({ sub: userId, jti }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
+  const token = jwt.sign({ sub: userId, jti }, JWT_SECRET, { expiresIn: rememberMe ? JWT_REMEMBER_EXPIRES_IN : JWT_EXPIRES_IN })
   const decoded = jwt.decode(token)
   return { token, jti, expiresAt: new Date(decoded.exp * 1000) }
 }
 
-const login = async ({ email, password }) => {
+const login = async ({ email, password, rememberMe }, { ip } = {}) => {
   if (!isValidEmail(email) || typeof password !== 'string') {
     throw unauthorized('Invalid email or password')
   }
+  const key = attemptKey(email, ip)
+  assertNotLockedOut(key)
 
   const result = await query(SQL.getLoginByEmail, [email])
   const user = result.rows[0]
-  if (!user) throw unauthorized('Invalid email or password')
+  if (!user) {
+    recordFailedLogin(key)
+    throw unauthorized('Invalid email or password')
+  }
 
   const passwordMatches = await bcrypt.compare(password, user.password_hash)
-  if (!passwordMatches) throw unauthorized('Invalid email or password')
+  if (!passwordMatches) {
+    recordFailedLogin(key)
+    throw unauthorized('Invalid email or password')
+  }
+  failedLogins.delete(key)
 
   if (!user.email_verified_at) {
     throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Please verify your email before logging in. Check your inbox for the verification link.')
   }
 
-  const { token, expiresAt } = issueTokenForUser(user.id)
+  const { token, expiresAt } = issueTokenForUser(user.id, { rememberMe: rememberMe === true })
   return { token, expiresAt }
 }
 

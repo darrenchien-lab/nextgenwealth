@@ -53,9 +53,12 @@ export async function request(path, options = {}) {
     }
   }
 
-  if (response.status === 401) {
+  // A 401 on a signed-in request means the session ran out or was revoked:
+  // back to the login page, which says so. A 401 without a token (a wrong
+  // password on the login form itself) is just an error for that form.
+  if (response.status === 401 && token) {
     clearToken()
-    if (typeof window !== 'undefined') window.location.href = '/login'
+    if (typeof window !== 'undefined') window.location.href = '/login?expired=1'
     throw new ApiError('Session expired', 401, 'UNAUTHORIZED')
   }
 

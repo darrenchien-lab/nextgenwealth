@@ -80,3 +80,22 @@ test('verify-email: a made-up token is rejected', async () => {
   const res = await request(app).post('/auth/verify-email').send({ token: 'not-a-real-token' })
   assert.equal(res.status, 400)
 })
+
+test('login: "keep me signed in" gives a long session, and repeated wrong passwords lock the email out for a while', async () => {
+  const user = await createUnverifiedUser()
+  await pool.query('UPDATE users SET email_verified_at = NOW() WHERE id = $1', [user.id])
+
+  const short = await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })
+  const long = await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD, rememberMe: true })
+  const hoursLeft = (res) => (new Date(res.body.expiresAt).getTime() - Date.now()) / 3600000
+  assert.ok(hoursLeft(long) > 24 * 7, 'remembered session lasts weeks')
+  assert.ok(hoursLeft(short) < hoursLeft(long))
+
+  for (let i = 0; i < 5; i++) {
+    assert.equal((await request(app).post('/auth/login').send({ email: user.email, password: 'wrong-password' })).status, 401)
+  }
+  // Locked now, even with the right password.
+  const locked = await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })
+  assert.equal(locked.status, 429)
+  assert.equal(locked.body.code, 'TOO_MANY_ATTEMPTS')
+})

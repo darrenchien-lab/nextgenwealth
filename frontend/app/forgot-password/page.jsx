@@ -3,7 +3,9 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { request } from '@/lib/apiClient'
+import { Mail, Loader2 } from 'lucide-react'
 import AuthShell from '@/components/auth/AuthShell'
+import TextField from '@/components/auth/TextField'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -43,27 +45,29 @@ export default function ForgotPasswordPage() {
           If that email is registered, a password reset link has been sent. Check your inbox.
         </p>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
-            <input
-              type="email"
-              required
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <TextField
+            id="email"
+            label="Email"
+            icon={Mail}
+            type="email"
+            required
+            autoComplete="email"
+            autoFocus
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? 'Sending...' : 'Send reset link'}
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {submitting ? 'Sending…' : 'Send reset link'}
           </button>
         </form>
       )}

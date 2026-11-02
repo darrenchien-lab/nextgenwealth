@@ -10,7 +10,7 @@ router.post('/register', asyncHandler(async (req, res) => {
 }))
 
 router.post('/login', asyncHandler(async (req, res) => {
-  const { token, expiresAt } = await authService.login(req.body || {})
+  const { token, expiresAt } = await authService.login(req.body || {}, { ip: req.ip })
   res.json({ success: true, token, expiresAt })
 }))
 
