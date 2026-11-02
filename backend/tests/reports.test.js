@@ -65,3 +65,17 @@ test('reports: currency exposure, and how much rate moves since the cycle began 
   assert.equal(krona.rateChangePercentage, -20)
   assert.equal(res.fxImpact.total, -2)
 })
+
+test('reports: the export is a PDF for this or the last cycle, and Excel is no longer offered', async () => {
+  const { as } = await createTestUser()
+  const pdf = await as.get('/reports/export?format=pdf').buffer(true).parse((res, cb) => {
+    const chunks = []
+    res.on('data', (c) => chunks.push(c))
+    res.on('end', () => cb(null, Buffer.concat(chunks)))
+  })
+  assert.equal(pdf.status, 200)
+  assert.equal(pdf.headers['content-type'], 'application/pdf')
+  assert.equal(pdf.body.subarray(0, 4).toString(), '%PDF')
+  assert.equal((await as.get('/reports/export?format=pdf&periodOffset=1')).status, 200)
+  assert.equal((await as.get('/reports/export?format=excel')).status, 400)
+})

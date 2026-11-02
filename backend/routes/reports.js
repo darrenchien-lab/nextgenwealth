@@ -60,9 +60,7 @@ router.get('/net-worth-history', asyncHandler(async (req, res) => {
 }))
 
 router.get('/export', asyncHandler(async (req, res) => {
-  // eslint-disable-next-line no-unused-vars
-  const { changes, periodOffset, ...summary } = await reportsService.getDashboardSummary(req.userId, req.query)
-  const { buffer, contentType, filename } = await reportExportService.exportReport(req.query.format, summary)
+  const { buffer, contentType, filename } = await reportExportService.exportReport(req.userId, { format: req.query.format, periodOffset: req.query.periodOffset })
   res.setHeader('Content-Type', contentType)
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
   res.send(buffer)

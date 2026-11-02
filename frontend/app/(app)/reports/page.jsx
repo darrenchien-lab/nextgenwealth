@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Brush } from 'recharts'
 import { request } from '@/lib/apiClient'
+import { Download, Loader2 } from 'lucide-react'
 import { formatCurrency, formatNumber } from '@/lib/format'
 import { CHART_RANGES, applyChartRange, historyInRange, formatAxisDate, withTimestamps } from '@/lib/chartRanges'
 import TrendAreaChart from '@/components/TrendAreaChart'
@@ -111,6 +112,7 @@ export default function ReportsPage() {
   const [loadError, setLoadError] = useState('')
   const [exportError, setExportError] = useState('')
   const [exporting, setExporting] = useState('')
+  const [exportCycle, setExportCycle] = useState(0)
 
   const filteredNetWorthHistory = useMemo(() => (
     applyChartRange(netWorthHistory, nwRange)
@@ -146,15 +148,16 @@ export default function ReportsPage() {
     }
   }
 
-  async function handleExport(format) {
+  // The report covers one budget cycle: this one, or the last full one.
+  async function handleExport() {
     setExportError('')
-    setExporting(format)
+    setExporting('pdf')
     try {
-      const blob = await request(`/reports/export?format=${format}`)
+      const blob = await request(`/reports/export?format=pdf&periodOffset=${exportCycle}`)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = format === 'pdf' ? 'nextgen-wealth-report.pdf' : 'nextgen-wealth-report.xlsx'
+      a.download = `nextgen-wealth-report-${exportCycle === 1 ? 'last-cycle' : 'this-cycle'}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -172,12 +175,19 @@ export default function ReportsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Reports</h1>
-        <div className="flex gap-2">
-          <button onClick={() => handleExport('pdf')} disabled={exporting === 'pdf'} className="rounded-lg bg-gray-800 px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-50">
-            {exporting === 'pdf' ? 'Exporting...' : 'Export PDF'}
-          </button>
-          <button onClick={() => handleExport('excel')} disabled={exporting === 'excel'} className="rounded-lg bg-gray-800 px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-50">
-            {exporting === 'excel' ? 'Exporting...' : 'Export Excel'}
+        <div className="flex items-center overflow-hidden rounded-lg border border-gray-300 shadow-sm dark:border-gray-600">
+          <select
+            value={exportCycle}
+            onChange={(e) => setExportCycle(Number(e.target.value))}
+            aria-label="Cycle to export"
+            className="border-0 border-r border-gray-300 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:ring-0 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          >
+            <option value={0} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">This cycle</option>
+            <option value={1} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Last cycle</option>
+          </select>
+          <button onClick={handleExport} disabled={exporting === 'pdf'} className="flex items-center gap-1.5 bg-gray-800 px-3.5 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-gray-900 disabled:opacity-60 dark:bg-gray-700 dark:hover:bg-gray-600">
+            {exporting === 'pdf' ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            {exporting === 'pdf' ? 'Preparing PDF…' : 'Export PDF'}
           </button>
         </div>
       </div>
@@ -258,7 +268,7 @@ export default function ReportsPage() {
                       name="Net Worth"
                       height={280}
                       formatValue={(value, row) => formatCurrency(value, row.displayCurrency)}
-                      formatAxisValue={formatNumber}
+                      formatAxisValue={(v) => formatNumber(Math.round(v))}
                     />
                   )}
                 </ResponsiveContainer>
