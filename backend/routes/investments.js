@@ -48,6 +48,11 @@ router.delete('/:id/price-source', asyncHandler(async (req, res) => {
   res.json({ success: true, holding })
 }))
 
+router.get('/performance', asyncHandler(async (req, res) => {
+  const performance = await investmentsService.getPeriodPerformance(req.userId, { periodOffset: req.query.periodOffset, startDate: req.query.startDate, endDate: req.query.endDate })
+  res.json({ success: true, ...performance })
+}))
+
 router.get('/portfolio', asyncHandler(async (req, res) => {
   const portfolio = await investmentsService.getPortfolio(req.userId)
   res.json({ success: true, ...portfolio })

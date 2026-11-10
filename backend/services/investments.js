@@ -36,6 +36,7 @@ const assertValidPrice = (value, fieldName) => {
 }
 
 const SQL = {
+  listHoldingNames: loadSql('investments/listHoldingNames'),
   create: loadSql('investments/create'),
   getById: loadSql('investments/getById'),
   updatePrice: loadSql('investments/updatePrice'),
@@ -247,19 +248,22 @@ const getPortfolio = async (userId) => {
 
   let totalValue = 0
   let totalCostBasis = 0
+  let totalCostBasisExcludingFees = 0
   let hasUnconverted = false
 
   const holdings = []
   for (const holding of result.rows) {
     const rawValue = Number(holding.quantity) * Number(holding.current_price)
     const rawCostBasis = Number(holding.cost_basis_total)
+    const rawCostExcludingFees = rawCostBasis - Number(holding.fees_total || 0)
 
-    const [convertedValue, convertedCostBasis] = await Promise.all([
+    const [convertedValue, convertedCostBasis, convertedCostExcludingFees] = await Promise.all([
       currencyService.convertAmount(rawValue, holding.currency, displayCurrency),
-      currencyService.convertAmount(rawCostBasis, holding.currency, displayCurrency)
+      currencyService.convertAmount(rawCostBasis, holding.currency, displayCurrency),
+      currencyService.convertAmount(rawCostExcludingFees, holding.currency, displayCurrency)
     ])
 
-    if (!convertedValue.available || !convertedCostBasis.available) {
+    if (!convertedValue.available || !convertedCostBasis.available || !convertedCostExcludingFees.available) {
       hasUnconverted = true
       holdings.push({ ...holding, currentValue: null, unrealizedGain: null, returnPercentage: null, returnPercentageExcludingFees: returnExcludingFees(holding), converted: false })
       continue
@@ -268,12 +272,15 @@ const getPortfolio = async (userId) => {
     const value = convertedValue.amount
     const costBasis = convertedCostBasis.amount
     const gain = value - costBasis
+    const costExcludingFees = convertedCostExcludingFees.amount
     totalValue += value
     totalCostBasis += costBasis
+    totalCostBasisExcludingFees += costExcludingFees
     holdings.push({
       ...holding,
       currentValue: Math.round(value * 100) / 100,
       unrealizedGain: Math.round(gain * 100) / 100,
+      unrealizedGainExcludingFees: Math.round((value - costExcludingFees) * 100) / 100,
       returnPercentage: costBasis > 0 ? Math.round((gain / costBasis) * 1000) / 10 : null,
       returnPercentageExcludingFees: returnExcludingFees(holding),
       converted: true
@@ -286,6 +293,9 @@ const getPortfolio = async (userId) => {
     totalValue: Math.round(totalValue * 100) / 100,
     totalCostBasis: Math.round(totalCostBasis * 100) / 100,
     totalUnrealizedGain: Math.round((totalValue - totalCostBasis) * 100) / 100,
+    // The same two without broker fees, as broker apps show them.
+    totalCostBasisExcludingFees: Math.round(totalCostBasisExcludingFees * 100) / 100,
+    totalUnrealizedGainExcludingFees: Math.round((totalValue - totalCostBasisExcludingFees) * 100) / 100,
     hasUnconverted
   }
 }
@@ -520,7 +530,8 @@ const solveXirr = (flows) => {
 // The portfolio's money-weighted annual return (XIRR): each recorded buy is
 // money in on its own date, each sell money out, and today's value is what
 // would come out now. Unlike getPortfolioCagr, a top-up only counts from the
-// day it was made. Needs every holding's trades to account for all of it.
+// day it was made. Buys and sells are counted at quantity × price, without
+// fees. Needs every holding's trades to account for all of it.
 // Trades from before the saved rate history began are converted at today's
 // rate.
 const getPortfolioXirr = async (userId) => {
@@ -551,8 +562,10 @@ const getPortfolioXirr = async (userId) => {
   const flows = []
   for (const t of trades) {
     const currency = currencyOf.get(t.holding_id)
-    let converted = await currencyService.convertAmountAsOf(Number(t.total_amount), currency, displayCurrency, t.trade_date)
-    if (!converted.available) converted = await currencyService.convertAmount(Number(t.total_amount), currency, displayCurrency)
+    // Quantity × price, without broker fees or tax, like the P&L figures.
+    const grossAmount = Number(t.quantity) * Number(t.price_per_unit)
+    let converted = await currencyService.convertAmountAsOf(grossAmount, currency, displayCurrency, t.trade_date)
+    if (!converted.available) converted = await currencyService.convertAmount(grossAmount, currency, displayCurrency)
     if (!converted.available) return { available: false, reason: `No exchange rate from ${currency}` }
     flows.push({ time: new Date(`${t.trade_date}T00:00:00Z`).getTime(), amount: t.type === 'buy' ? -converted.amount : converted.amount })
   }
@@ -560,8 +573,8 @@ const getPortfolioXirr = async (userId) => {
 
   const rate = solveXirr(flows)
   if (rate === null) return { available: false, reason: 'Return could not be worked out from these trades' }
-  // Gain/loss on what the current holdings cost, as the holdings list shows it.
-  const costBasis = portfolio.holdings.reduce((sum, h) => sum + (h.currentValue - h.unrealizedGain), 0)
+  // Gain/loss on what the current holdings cost, fees not counted.
+  const costBasis = portfolio.totalCostBasisExcludingFees
   return {
     available: true,
     xirr: Math.round(rate * 1000) / 10,
@@ -659,6 +672,156 @@ const getAllocationValuesAsOf = async (userId, asOf, displayCurrency) => {
   }
 
   return { values, hasUnconverted }
+}
+
+// What each holding was worth on a past day, in the display currency: its
+// last saved value on or before then, plus any trade since that snapshot at
+// the trade's own price (same rebuild as getAllocationValuesAsOf, per holding).
+const getHoldingValuesAsOf = async (userId, asOf, displayCurrency) => {
+  const values = new Map()
+  let hasUnconverted = false
+  const add = (id, amount) => values.set(id, (values.get(id) || 0) + amount)
+  const snapshotDateByHolding = new Map()
+  for (const row of (await query(SQL.listHoldingSnapshotsAsOf, [userId, asOf])).rows) {
+    snapshotDateByHolding.set(row.holding_id, row.snapshot_date)
+    const { amount, available } = await currencyService.convertAmount(Number(row.value), row.display_currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    add(row.holding_id, amount)
+  }
+  for (const trade of (await query(SQL.listTradesAsOf, [userId, asOf])).rows) {
+    const snapshotDate = snapshotDateByHolding.get(trade.holding_id)
+    if (snapshotDate && trade.trade_date <= snapshotDate) continue
+    const tradeValue = Number(trade.quantity) * Number(trade.price_per_unit) * (trade.type === 'sell' ? -1 : 1)
+    const { amount, available } = await currencyService.convertAmount(tradeValue, trade.currency, displayCurrency)
+    if (!available) { hasUnconverted = true; continue }
+    add(trade.holding_id, amount)
+  }
+  return { values, hasUnconverted }
+}
+
+const daysBetween = (fromKey, toKey) => Math.round((new Date(`${toKey}T00:00:00`) - new Date(`${fromKey}T00:00:00`)) / 86400000)
+
+// How the investments did over one budget cycle (periodOffset 0 = this one):
+// the change in their value, minus the money put in or taken out meanwhile —
+// so buying more never counts as a gain. pnl = end value − start value −
+// (bought − sold), per holding and in total. Buys and sells are counted at
+// quantity × price, without broker fees or tax. The percentage is a Modified
+// Dietz return: pnl over the start value plus each flow weighted by how long
+// it was invested during the cycle.
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+
+// With startDate/endDate ('YYYY-MM-DD', both days included) it measures that
+// stretch instead of a cycle.
+const getPeriodPerformance = async (userId, { periodOffset, startDate, endDate } = {}) => {
+  const offset = Math.min(24, Math.max(0, Math.floor(Number(periodOffset)) || 0))
+  const displayCurrency = await accountsService.getDisplayCurrency(userId)
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const todayKey = toDateKey(new Date())
+  const custom = Boolean(startDate || endDate)
+  let start
+  let end
+  if (custom) {
+    for (const [name, value] of [['startDate', startDate], ['endDate', endDate]]) {
+      if (value && !DATE_ONLY.test(value)) throw badRequest(`${name} must be in YYYY-MM-DD format`)
+    }
+    start = new Date(`${startDate || endDate}T00:00:00`)
+    end = new Date(`${endDate || todayKey}T00:00:00`)
+    if (start > end) throw badRequest('startDate must not be after endDate')
+  } else {
+    ;({ start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, offset))
+  }
+  // Measured from the close of the day before the first day, so a change on
+  // the first day itself counts.
+  const startKey = toDateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1))
+  const endKey = toDateKey(end) < todayKey ? toDateKey(end) : todayKey
+
+  const names = new Map((await query(SQL.listHoldingNames, [userId])).rows.map((h) => [h.id, h]))
+  let hasUnconverted = false
+
+  const startSide = await getHoldingValuesAsOf(userId, startKey, displayCurrency)
+  hasUnconverted = hasUnconverted || startSide.hasUnconverted
+  let endValues
+  if (endKey === todayKey) {
+    const portfolio = await getPortfolio(userId)
+    hasUnconverted = hasUnconverted || portfolio.hasUnconverted
+    endValues = new Map(portfolio.holdings.filter((h) => h.currentValue !== null).map((h) => [h.id, h.currentValue]))
+  } else {
+    const endSide = await getHoldingValuesAsOf(userId, endKey, displayCurrency)
+    hasUnconverted = hasUnconverted || endSide.hasUnconverted
+    endValues = endSide.values
+  }
+
+  const totalDays = Math.max(1, daysBetween(startKey, endKey))
+  const rows = new Map()
+  const row = (id) => {
+    if (!rows.has(id)) rows.set(id, { id, name: names.get(id)?.asset_name || 'Unknown', startValue: startSide.values.get(id) || 0, endValue: endValues.get(id) || 0, bought: 0, sold: 0, weighted: 0 })
+    return rows.get(id)
+  }
+  for (const id of new Set([...startSide.values.keys(), ...endValues.keys()])) row(id)
+
+  let weightedFlows = 0
+  for (const t of (await query(SQL.listTradesForCost, [userId])).rows) {
+    if (t.trade_date <= startKey || t.trade_date > endKey) continue
+    const currency = names.get(t.holding_id)?.currency
+    if (!currency) continue
+    // Quantity × price, not the total paid or received: broker fees and tax
+    // are left out, so the result is the price movement alone.
+    const grossAmount = Number(t.quantity) * Number(t.price_per_unit)
+    let converted = await currencyService.convertAmountAsOf(grossAmount, currency, displayCurrency, t.trade_date)
+    if (!converted.available) converted = await currencyService.convertAmount(grossAmount, currency, displayCurrency)
+    if (!converted.available) { hasUnconverted = true; continue }
+    const target = row(t.holding_id)
+    const flow = t.type === 'buy' ? converted.amount : -converted.amount
+    if (t.type === 'buy') target.bought += converted.amount
+    else target.sold += converted.amount
+    const weighted = flow * ((totalDays - daysBetween(startKey, t.trade_date)) / totalDays)
+    target.weighted += weighted
+    weightedFlows += weighted
+  }
+
+  // Each holding's own return over the cycle, worked out the same way as the
+  // total one (see below).
+  const dietz = (pnl, startValue, weighted, bought) => {
+    let base = startValue + weighted
+    if (!(base > 0)) base = startValue + bought
+    return base > 0 ? Math.round((pnl / base) * 1000) / 10 : null
+  }
+  const holdings = [...rows.values()]
+    .map((h) => ({ ...h, pnl: h.endValue - h.startValue - (h.bought - h.sold) }))
+    .filter((h) => Math.abs(h.startValue) + Math.abs(h.endValue) + h.bought + h.sold > 0.005)
+    .map(({ weighted, ...h }) => ({
+      ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k, typeof v === 'number' ? roundCents(v) : v])),
+      percent: dietz(h.pnl, h.startValue, weighted, h.bought)
+    }))
+    .sort((a, b) => b.pnl - a.pnl)
+
+  const sum = (key) => roundCents(holdings.reduce((total, h) => total + h[key], 0))
+  const startValue = sum('startValue')
+  const pnl = sum('pnl')
+  // Money that went in on the very last day has weight 0, which can leave
+  // nothing to divide by (everything bought today): fall back to the money
+  // put in.
+  let base = startValue + weightedFlows
+  if (!(base > 0)) base = startValue + sum('bought')
+  return {
+    displayCurrency,
+    periodOffset: offset,
+    periodLabel: custom
+      ? `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(`${endKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+      : periods.formatPeriodLabel(start, end, cycleStartDay),
+    startDate: startKey,
+    firstDay: toDateKey(start),
+    endDate: endKey,
+    isCurrent: custom ? endKey === todayKey : offset === 0,
+    startValue,
+    endValue: sum('endValue'),
+    bought: sum('bought'),
+    sold: sum('sold'),
+    pnl,
+    percent: base > 0 ? Math.round((pnl / base) * 1000) / 10 : null,
+    holdings,
+    hasUnconverted
+  }
 }
 
 // Ends of past budget cycles, most recent first ({ offset: 1 } is the cycle
@@ -999,6 +1162,7 @@ module.exports = {
   getPortfolio,
   getPortfolioCagr,
   getPortfolioXirr,
+  getPeriodPerformance,
   addToHolding,
   removeHolding,
   setAllocationTargets,

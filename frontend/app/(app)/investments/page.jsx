@@ -255,9 +255,57 @@ export default function InvestmentsPage() {
   // The open row menu: which holding, and where to draw it (fixed to the
   // viewport so the table's horizontal scroll box can't clip it).
   const [rowMenu, setRowMenu] = useState(null)
+  // How the investments did over the range picked on the value chart (or the
+  // current budget cycle): price changes only, in total or for the holding
+  // picked there. `cycleFirstDay` is the first day of the current cycle, which
+  // the chart's "Cycle" range starts from.
+  const [performance, setPerformance] = useState(null)
+  const [cycleFirstDay, setCycleFirstDay] = useState(null)
+  const performanceKey = portfolio?.totalValue
+  const historyStart = history?.[0]?.date || null
+  useEffect(() => {
+    let cancelled = false
+    async function loadPerformance() {
+      const today = localDateKey(new Date())
+      const range = CHART_RANGES.find((r) => r.label === historyRange)
+      let queryString = 'periodOffset=0'
+      if (historyRange !== 'Cycle') {
+        let from = null
+        if (range?.ytd) from = `${new Date().getFullYear()}-01-01`
+        else if (Number.isFinite(range?.days)) {
+          const d = new Date()
+          d.setDate(d.getDate() - (range.days - 1))
+          from = localDateKey(d)
+        } else from = historyStart
+        if (!from) return
+        queryString = `startDate=${from}&endDate=${today}`
+      }
+      try {
+        const data = await request(`/investments/performance?${queryString}`)
+        if (cancelled) return
+        setPerformance(data)
+        if (historyRange === 'Cycle') setCycleFirstDay(data.firstDay)
+      } catch {
+        // The result is a bonus view; the rest of the page still works.
+      }
+    }
+    loadPerformance()
+    return () => { cancelled = true }
+  }, [historyRange, historyStart, performanceKey])
+  useEffect(() => {
+    async function loadCycleStart() {
+      try {
+        setCycleFirstDay((await request('/investments/performance?periodOffset=0')).firstDay)
+      } catch {
+        // Without it the Cycle range simply shows everything.
+      }
+    }
+    loadCycleStart()
+  }, [])
 
   const filteredHistory = useMemo(() => {
-    const rows = applyChartRange(history, historyRange)
+    const cycleRows = historyRange === 'Cycle' && history && cycleFirstDay ? history.filter((h) => h.date >= cycleFirstDay) : null
+    const rows = cycleRows && cycleRows.length > 1 ? cycleRows : applyChartRange(history, historyRange === 'Cycle' ? 'All' : historyRange)
     if (!rows) return rows
     // Trades before the range's first day belong to earlier history; one on
     // that first day is marked on it.
@@ -267,7 +315,7 @@ export default function InvestmentsPage() {
       && firstKey && localDateKey(t.occurred_at) >= (firstKey.length === 7 ? `${firstKey}-01` : firstKey)
     ))
     return withTimestamps(withTrades(rows, shownTrades))
-  }, [history, historyRange, historyHoldingId, transactions])
+  }, [history, historyRange, historyHoldingId, transactions, cycleFirstDay])
 
   const filteredHoldingsHistory = useMemo(() => {
     const rows = applyChartRange(holdingsHistory?.data, holdingsRange)
@@ -746,9 +794,10 @@ export default function InvestmentsPage() {
                     <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${historyHoldingId ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
                   </div>
                   <span className="mx-1.5 h-5 w-px bg-gray-200 dark:bg-gray-700" aria-hidden="true" />
-                  {CHART_RANGES.map((r) => (
+                  {[...CHART_RANGES.filter((r) => r.label !== '1Y' && r.label !== '5Y' && r.label !== 'All'), { label: 'Cycle' }, ...CHART_RANGES.filter((r) => r.label === '1Y' || r.label === '5Y' || r.label === 'All')].map((r) => (
                     <button
                       key={r.label}
+                      title={r.label === 'Cycle' ? 'The current budget cycle' : undefined}
                       onClick={() => setHistoryRange(r.label)}
                       className={`rounded-lg px-2.5 py-1 text-xs font-medium ${
                         historyRange === r.label ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
@@ -761,26 +810,41 @@ export default function InvestmentsPage() {
               )}
             />
             {(() => {
-              // With one holding picked, its value now heads the chart, like
-              // the portfolio total does in the summary above.
-              const picked = historyHoldingId && portfolio.holdings.find((h) => String(h.id) === historyHoldingId)
-              if (!picked || picked.currentValue === null) return null
-              const gain = picked.unrealizedGain
-              const cost = picked.currentValue - gain
-              const pct = cost > 0 ? Math.round((gain / cost) * 1000) / 10 : null
+              // Heads the chart: how the portfolio — or the one holding picked —
+              // did over the range chosen above, from price changes only.
+              const picked = historyHoldingId ? portfolio.holdings.find((h) => String(h.id) === historyHoldingId) : null
+              if (!performance) return null
+              const result = picked
+                ? performance.holdings.find((h) => h.id === picked.id)
+                : { pnl: performance.pnl, percent: performance.percent, any: performance.holdings.length > 0 }
+              const currency = performance.displayCurrency
+              const name = picked ? picked.asset_name : 'All holdings'
+              const rangeName = historyRange === 'Cycle' ? 'this cycle' : historyRange === 'All' ? 'since the start' : historyRange === 'YTD' ? 'this year' : `last ${historyRange}`
+              if (!result || (!picked && !result.any)) {
+                return <p className="mb-4 text-sm text-gray-400 dark:text-gray-500">{picked ? `You didn't hold ${picked.asset_name} ${rangeName}.` : `No investments ${rangeName}.`}</p>
+              }
+              const up = result.pnl >= 0
               return (
-                <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-1">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">{picked.asset_name} · Market value</p>
-                    <p className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">{formatCurrency(picked.currentValue, portfolio.displayCurrency)}</p>
-                  </div>
-                  {gain !== null && (
-                    <span className={`mb-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${gain >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                      {gain >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                      {gain >= 0 ? '+' : '−'}{formatCurrency(Math.abs(gain), portfolio.displayCurrency)}{pct !== null && ` · ${gain >= 0 ? '+' : '−'}${Math.abs(pct)}%`}
+                <div className="mb-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    {name} · result {rangeName}
+                    <span className="ml-1.5 font-normal normal-case tracking-normal">({performance.periodLabel})</span>
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className={`inline-flex items-center gap-1 text-2xl font-semibold tracking-tight ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {up ? <ArrowUpRight size={22} strokeWidth={2.5} /> : <ArrowDownRight size={22} strokeWidth={2.5} />}
+                      {up ? '+' : '−'}{formatCurrency(Math.abs(result.pnl), currency)}
                     </span>
-                  )}
-                  <Link href={`/investments/${picked.id}`} className="mb-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">View details →</Link>
+                    {result.percent !== null && (
+                      <span className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${up ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                        {up ? '+' : '−'}{Math.abs(result.percent)}%
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400 dark:text-gray-500" title="Only price changes count. Fees, and money you bought or sold, don't">
+                      {up ? 'Up' : 'Down'} because prices {up ? 'rose' : 'fell'}
+                    </span>
+                    {picked && <Link href={`/investments/${picked.id}`} className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">View details →</Link>}
+                  </div>
                 </div>
               )
             })()}
@@ -1038,7 +1102,7 @@ export default function InvestmentsPage() {
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{formatCurrency(t.total_amount, t.currency)}</p>
                         {t.realized_gain !== null && (
-                          <p className={`text-xs font-medium ${Number(t.realized_gain) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          <p title="Profit or loss on this sale, after fees and tax" className={`text-xs font-medium ${Number(t.realized_gain) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                             {Number(t.realized_gain) >= 0 ? '+' : ''}{formatCurrency(t.realized_gain, t.currency)}
                           </p>
                         )}

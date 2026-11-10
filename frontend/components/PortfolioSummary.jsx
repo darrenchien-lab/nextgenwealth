@@ -13,11 +13,14 @@ function formatUpdatedAt(value) {
 }
 
 // The portfolio at a glance: what it's worth now, the unrealized P&L on what
-// was paid for it, and the figures behind that.
+// was paid for it, and the figures behind that. All of it is as of now.
 export default function PortfolioSummary({ portfolio }) {
   const currency = portfolio.displayCurrency
-  const gain = portfolio.totalUnrealizedGain
-  const percent = portfolio.totalCostBasis > 0 ? Math.round((gain / portfolio.totalCostBasis) * 1000) / 10 : null
+  // Without broker fees, as broker apps show it; the version with fees is in
+  // each holding's cost basis table.
+  const cost = portfolio.totalCostBasisExcludingFees
+  const gain = portfolio.totalUnrealizedGainExcludingFees
+  const percent = cost > 0 ? Math.round((gain / cost) * 1000) / 10 : null
   const up = gain >= 0
   const openHoldings = portfolio.holdings.filter((h) => Number(h.quantity) > 0)
   const updates = openHoldings.map((h) => h.price_updated_at).filter(Boolean).sort()
@@ -52,7 +55,7 @@ export default function PortfolioSummary({ portfolio }) {
           </div>
         </div>
         <div className="flex flex-col justify-center gap-3 border-t border-gray-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0 dark:border-gray-700">
-          {stat(Landmark, 'Capital invested', formatCurrency(portfolio.totalCostBasis, currency))}
+          {stat(Landmark, 'Capital invested', formatCurrency(cost, currency))}
           {stat(Layers, 'Holdings', openHoldings.length)}
           {stat(Clock, 'Prices updated', lastUpdate ? formatUpdatedAt(lastUpdate) : 'Manual')}
         </div>

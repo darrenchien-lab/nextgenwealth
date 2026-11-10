@@ -192,3 +192,45 @@ test('investments: a sale records the price and amount received, credits the rec
   assert.equal(Number(sell.price_per_unit), 12000)
   assert.equal(Number(sell.total_amount), 478800)
 })
+
+test('investments: the cycle result is the change in value minus what was bought, so buying more is never a gain', async () => {
+  const { as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const holding = (await as.post('/investments').send({
+    assetName: 'PERF', assetType: 'stock', quantity: 100, currency: 'IDR', totalSpent: 1001000, price: 10000
+  })).body.holding
+
+  // Bought this cycle and nothing else yet: counted at quantity × price, so
+  // the Rp 1,000 fee isn't a loss here and the result is zero.
+  let res = (await as.get('/investments/performance')).body
+  assert.equal(res.bought, 1000000)
+  assert.equal(res.pnl, 0)
+
+  // The price rises 10%: that, and only that, is the cycle's gain.
+  await as.patch(`/investments/${holding.id}/price`).send({ currentPrice: 11000 })
+  res = (await as.get('/investments/performance')).body
+  assert.equal(res.endValue, 1100000)
+  assert.equal(res.pnl, 100000)
+  assert.equal(res.holdings.find((h) => h.name === 'PERF').pnl, 100000)
+  assert.ok(res.percent > 9 && res.percent <= 10, `expected about 10%, got ${res.percent}`)
+
+  // Buying more at the market price adds money in, not profit.
+  await as.post(`/investments/${holding.id}/add`).send({ quantity: 100, price: 11000, totalSpent: 1101000 })
+  res = (await as.get('/investments/performance')).body
+  assert.equal(res.bought, 2100000)
+  assert.equal(res.pnl, 100000)
+})
+
+test('investments: the result can be measured over any date range, and a bad range is refused', async () => {
+  const { as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const holding = (await as.post('/investments').send({ assetName: 'RNG', assetType: 'stock', quantity: 10, currency: 'IDR', totalSpent: 100000, price: 10000 })).body.holding
+  await as.patch(`/investments/${holding.id}/price`).send({ currentPrice: 12000 })
+  const today = new Date()
+  const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const res = (await as.get(`/investments/performance?startDate=${key}&endDate=${key}`)).body
+  assert.equal(res.pnl, 20000)
+  assert.equal(res.holdings[0].name, 'RNG')
+  assert.equal((await as.get('/investments/performance?startDate=not-a-date')).status, 400)
+  assert.equal((await as.get(`/investments/performance?startDate=${key}&endDate=2000-01-01`)).status, 400)
+})

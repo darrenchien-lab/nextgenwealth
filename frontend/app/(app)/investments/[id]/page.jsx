@@ -143,18 +143,18 @@ export default function HoldingDetailPage() {
       {holding && (
         <>
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700">
-            <div className={`h-1 ${holding.unrealizedGain >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+            <div className={`h-1 ${holding.unrealizedGainExcludingFees >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
             <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-[1fr_20rem]">
               <div className="min-w-0">
                 <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Market value</p>
                 <p className="mt-1 truncate text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">{formatCurrency(holding.value, currency)}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${holding.unrealizedGain >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                    {holding.unrealizedGain >= 0 ? <ArrowUpRight size={15} strokeWidth={2.5} /> : <ArrowDownRight size={15} strokeWidth={2.5} />}
-                    {holding.unrealizedGain >= 0 ? '+' : '−'}{formatCurrency(Math.abs(holding.unrealizedGain), currency)}
-                    {holding.returnPercentage !== null && <span className="font-medium opacity-80">· {holding.returnPercentage >= 0 ? '+' : '−'}{Math.abs(holding.returnPercentage)}%</span>}
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${holding.unrealizedGainExcludingFees >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                    {holding.unrealizedGainExcludingFees >= 0 ? <ArrowUpRight size={15} strokeWidth={2.5} /> : <ArrowDownRight size={15} strokeWidth={2.5} />}
+                    {holding.unrealizedGainExcludingFees >= 0 ? '+' : '−'}{formatCurrency(Math.abs(holding.unrealizedGainExcludingFees), currency)}
+                    {holding.returnPercentageExcludingFees !== null && <span className="font-medium opacity-80">· {holding.returnPercentageExcludingFees >= 0 ? '+' : '−'}{Math.abs(holding.returnPercentageExcludingFees)}%</span>}
                   </span>
-                  <span className="text-xs text-gray-400 dark:text-gray-500">Unrealized P&amp;L, after fees</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500" title="Without broker fees. The version with fees is in the Cost basis table below">Unrealized P&amp;L</span>
                 </div>
                 <p className="mt-4 flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {holding.priceError ? (
@@ -170,7 +170,7 @@ export default function HoldingDetailPage() {
                 {[
                   [Layers, 'Quantity', formatQuantity(holding.quantity)],
                   [Tag, 'Last price', formatCurrency(holding.currentPrice, currency)],
-                  [Calculator, 'Average price', holding.averagePrice === null ? '-' : formatCurrency(holding.averagePrice, currency)],
+                  [Calculator, 'Average price', holding.averagePriceExcludingFees === null ? '-' : formatCurrency(holding.averagePriceExcludingFees, currency)],
                   [Receipt, 'Fees paid', formatCurrency(holding.feesTotal, currency)]
                 ].map(([Icon, label, value]) => (
                   <div key={label} className="flex items-center justify-between gap-3">
@@ -190,7 +190,7 @@ export default function HoldingDetailPage() {
               <PriceHistoryChart
                 points={priceHistory.points}
                 currency={priceHistory.currency || currency}
-                averagePrice={holding.averagePrice}
+                averagePrice={holding.averagePriceExcludingFees}
                 trades={holding.transactions}
                 source={priceHistory.source}
               />
@@ -198,36 +198,36 @@ export default function HoldingDetailPage() {
           </div>
 
           <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-            <CardHeader icon={Wallet} color="violet" title="Cost basis" subtitle="With fees is what actually left your account; without fees matches most broker apps" />
+            <CardHeader icon={Wallet} color="violet" title="Cost basis" subtitle="Without fees matches most broker apps; with fees is what actually left your account" />
             <div className="-mx-5 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 dark:bg-gray-900/40 text-left text-xs uppercase text-gray-500 dark:text-gray-400">
                   <tr>
                     <th className="px-5 py-3"></th>
-                    <th className="px-5 py-3 text-right">With fees</th>
                     <th className="px-5 py-3 text-right">Without fees</th>
+                    <th className="px-5 py-3 text-right">With fees</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-900 dark:text-gray-100">
                   <tr className="border-t border-gray-100 dark:border-gray-700">
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">Cost basis</td>
-                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium">{formatCurrency(holding.costBasis, currency)}</td>
-                    <td className="whitespace-nowrap px-5 py-3 text-right">{formatCurrency(holding.costBasisExcludingFees, currency)}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium">{formatCurrency(holding.costBasisExcludingFees, currency)}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{formatCurrency(holding.costBasis, currency)}</td>
                   </tr>
                   <tr className="border-t border-gray-100 dark:border-gray-700">
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">Average price</td>
-                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium">{holding.averagePrice === null ? '-' : formatCurrency(holding.averagePrice, currency)}</td>
-                    <td className="whitespace-nowrap px-5 py-3 text-right">{holding.averagePriceExcludingFees === null ? '-' : formatCurrency(holding.averagePriceExcludingFees, currency)}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium">{holding.averagePriceExcludingFees === null ? '-' : formatCurrency(holding.averagePriceExcludingFees, currency)}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{holding.averagePrice === null ? '-' : formatCurrency(holding.averagePrice, currency)}</td>
                   </tr>
                   <tr className="border-t border-gray-100 dark:border-gray-700">
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">Unrealized P/L</td>
-                    <td className={`whitespace-nowrap px-5 py-3 text-right font-medium ${gainClass(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain, currency)}</td>
-                    <td className={`whitespace-nowrap px-5 py-3 text-right ${gainClass(holding.unrealizedGainExcludingFees)}`}>{signed(holding.unrealizedGainExcludingFees, currency)}</td>
+                    <td className={`whitespace-nowrap px-5 py-3 text-right font-medium ${gainClass(holding.unrealizedGainExcludingFees)}`}>{signed(holding.unrealizedGainExcludingFees, currency)}</td>
+                    <td className={`whitespace-nowrap px-5 py-3 text-right ${gainClass(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain, currency)}</td>
                   </tr>
                   <tr className="border-t border-gray-100 dark:border-gray-700">
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">Return</td>
-                    <td className={`whitespace-nowrap px-5 py-3 text-right font-medium ${gainClass(holding.returnPercentage)}`}>{holding.returnPercentage === null ? '-' : `${holding.returnPercentage >= 0 ? '+' : ''}${holding.returnPercentage}%`}</td>
-                    <td className={`whitespace-nowrap px-5 py-3 text-right ${gainClass(holding.returnPercentageExcludingFees)}`}>{holding.returnPercentageExcludingFees === null ? '-' : `${holding.returnPercentageExcludingFees >= 0 ? '+' : ''}${holding.returnPercentageExcludingFees}%`}</td>
+                    <td className={`whitespace-nowrap px-5 py-3 text-right font-medium ${gainClass(holding.returnPercentageExcludingFees)}`}>{holding.returnPercentageExcludingFees === null ? '-' : `${holding.returnPercentageExcludingFees >= 0 ? '+' : ''}${holding.returnPercentageExcludingFees}%`}</td>
+                    <td className={`whitespace-nowrap px-5 py-3 text-right ${gainClass(holding.returnPercentage)}`}>{holding.returnPercentage === null ? '-' : `${holding.returnPercentage >= 0 ? '+' : ''}${holding.returnPercentage}%`}</td>
                   </tr>
                 </tbody>
               </table>
@@ -357,7 +357,7 @@ export default function HoldingDetailPage() {
                           <td className="whitespace-nowrap px-5 py-3 text-right font-medium text-gray-900 dark:text-gray-100">
                             {formatCurrency(t.totalAmount, currency)}
                             {t.realizedGain !== null && (
-                              <span className={`block text-xs ${gainClass(t.realizedGain)}`}>{signed(t.realizedGain, currency)}</span>
+                              <span title="Profit or loss on this sale, after fees and tax" className={`block text-xs ${gainClass(t.realizedGain)}`}>{signed(t.realizedGain, currency)}</span>
                             )}
                           </td>
                         </tr>

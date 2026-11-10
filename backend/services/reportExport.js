@@ -304,15 +304,15 @@ const generatePdfBuffer = (data) => new Promise((resolve, reject) => {
 
   // Investments
   const holdings = portfolio.holdings.filter((h) => Number(h.quantity) > 0)
-  p.sectionTitle('Investments', holdings.length ? 'Market value at the latest prices; P&L includes fees.' : undefined)
+  p.sectionTitle('Investments', holdings.length ? 'Market value at the latest prices; P&L is without broker fees.' : undefined)
   if (!holdings.length) {
     p.empty('No investments yet.')
   } else {
-    const gain = portfolio.totalUnrealizedGain
-    const gainPct = portfolio.totalCostBasis > 0 ? Math.round((gain / portfolio.totalCostBasis) * 1000) / 10 : null
+    const gain = portfolio.totalUnrealizedGainExcludingFees
+    const gainPct = portfolio.totalCostBasisExcludingFees > 0 ? Math.round((gain / portfolio.totalCostBasisExcludingFees) * 1000) / 10 : null
     const stats = [
       ['Portfolio value', money(portfolio.totalValue, currency), COLOR.ink],
-      ['Capital invested', money(portfolio.totalCostBasis, currency), COLOR.ink],
+      ['Capital invested', money(portfolio.totalCostBasisExcludingFees, currency), COLOR.ink],
       ['Unrealized P&L', `${signedMoney(gain, currency)}${gainPct !== null ? ` · ${pct(gainPct, { signed: true })}` : ''}`, gain >= 0 ? COLOR.up : COLOR.down],
       ['Return per year', xirr.available ? pct(xirr.xirr, { signed: true }) : '-', xirr.available && xirr.xirr < 0 ? COLOR.down : COLOR.up]
     ]
@@ -333,7 +333,7 @@ const generatePdfBuffer = (data) => new Promise((resolve, reject) => {
         { label: 'P&L', width: width * 0.18, align: 'right' }
       ],
       [...holdings].sort((a, b) => (b.currentValue ?? 0) - (a.currentValue ?? 0)).map((h) => {
-        const ret = h.returnPercentage
+        const ret = h.returnPercentageExcludingFees
         return [
           h.asset_name,
           quantity(h.quantity),
