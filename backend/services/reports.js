@@ -201,7 +201,7 @@ const getCashFlow = async (userId, { startDate, endDate }) => {
 const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId, periodOffset }) =>
   aggregates.getExpenseBreakdown(userId, { startDate, endDate, categoryId, periodOffset })
 
-const getCycleTrend = async (userId, { periodOffset } = {}) => aggregates.getCycleTrend(userId, { periodOffset })
+const getCycleTrend = async (userId, { periodOffset, budgeted } = {}) => aggregates.getCycleTrend(userId, { periodOffset, budgeted })
 
 const getTrends = async (userId, months) => aggregates.getMonthlyTrend(userId, months)
 

@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Wallet, TrendingUp, TrendingDown, PiggyBank, Landmark, HeartPulse, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, Activity, ShoppingBag } from 'lucide-react'
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { Wallet, TrendingUp, TrendingDown, PiggyBank, Landmark, HeartPulse, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
@@ -12,6 +12,7 @@ import CardHeader from '@/components/CardHeader'
 import ScrollFadeList from '@/components/ScrollFadeList'
 import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import SpendingPaceCard from '@/components/SpendingPaceCard'
 import { todayInputValue } from '@/lib/dates'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
@@ -32,6 +33,8 @@ export default function DashboardPage() {
   const [trends, setTrends] = useState(null)
   const [allocation, setAllocation] = useState(null)
   const [cycleTrend, setCycleTrend] = useState(null)
+  const [previousTrend, setPreviousTrend] = useState(null)
+  const [budgetTrend, setBudgetTrend] = useState(null)
   const [breakdown, setBreakdown] = useState(null)
   const chartTheme = useChartTheme()
   const [upcomingBills, setUpcomingBills] = useState(null)
@@ -51,11 +54,13 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [summaryData, trendsData, allocationData, cycleTrendData, breakdownData, billsData, goalsData, ratesData] = await Promise.all([
+        const [summaryData, trendsData, allocationData, cycleTrendData, previousTrendData, budgetTrendData, breakdownData, billsData, goalsData, ratesData] = await Promise.all([
           request(`/reports/dashboard?periodOffset=${periodOffset}`),
           request('/reports/trends?months=6'),
           request(`/reports/asset-allocation?periodOffset=${periodOffset}`),
           request(`/reports/cycle-trend?periodOffset=${periodOffset}`),
+          request(`/reports/cycle-trend?periodOffset=${periodOffset + 1}`),
+          request(`/reports/cycle-trend?periodOffset=${periodOffset}&budgeted=1`),
           request(`/reports/expense-breakdown?periodOffset=${periodOffset}`),
           request('/bills/upcoming'),
           request('/goals'),
@@ -65,6 +70,8 @@ export default function DashboardPage() {
         setTrends(trendsData.trends)
         setAllocation(allocationData)
         setCycleTrend(cycleTrendData)
+        setPreviousTrend(previousTrendData)
+        setBudgetTrend(budgetTrendData)
         setBreakdown(breakdownData)
         setUpcomingBills(billsData.bills)
         setBillsTotal({ total: billsData.total, displayCurrency: billsData.displayCurrency })
@@ -131,7 +138,6 @@ export default function DashboardPage() {
   const expenseSlices = breakdown
     ? withDistinctColors([...breakdown.breakdown].sort((a, b) => b.amount - a.amount), { nameKey: 'categoryName', theme: chartTheme })
     : []
-  const hasCycleActivity = cycleTrend && cycleTrend.days.some((d) => d.income > 0 || d.expense > 0)
 
   return (
     <div className="space-y-6">
@@ -336,34 +342,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2">
-          <CardHeader icon={Activity} color="blue" title="Monthly Trend" subtitle={cycleTrend ? cycleTrend.periodLabel : ''} />
-          {hasCycleActivity ? (
-            // Same chart as the Reports page's Monthly Trend used to be
-            // (income, expense and net lines), but across the days of this
-            // cycle, each point the total so far.
-            <div className="min-h-[210px] flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={cycleTrend.days}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="date" fontSize={12} tickFormatter={(d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`} minTickGap={16} />
-                <YAxis fontSize={12} tickFormatter={formatCompact} width={56} />
-                <Tooltip
-                  contentStyle={CHART_TOOLTIP_STYLE}
-                  labelFormatter={(d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
-                  formatter={(value) => formatCurrency(value, currency)}
-                />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="income" stroke="#10b981" name="Income" />
-                <Line type="monotone" dataKey="expense" stroke="#ef4444" name="Expense" />
-                <Line type="monotone" dataKey="net" stroke="#2563eb" name="Net" />
-              </LineChart>
-            </ResponsiveContainer>
-            </div>
-          ) : (
-            <EmptyChartState label="Nothing recorded this cycle yet" />
-          )}
-        </div>
+        <SpendingPaceCard current={cycleTrend} previous={previousTrend} budgeted={budgetTrend} currency={currency} className="lg:col-span-2 lg:h-[300px]" />
 
         <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[300px]">
           <CardHeader

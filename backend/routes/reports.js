@@ -39,7 +39,7 @@ router.get('/currency-exposure', asyncHandler(async (req, res) => {
 }))
 
 router.get('/cycle-trend', asyncHandler(async (req, res) => {
-  const trend = await reportsService.getCycleTrend(req.userId, { periodOffset: req.query.periodOffset })
+  const trend = await reportsService.getCycleTrend(req.userId, { periodOffset: req.query.periodOffset, budgeted: req.query.budgeted === '1' })
   res.json({ success: true, ...trend })
 }))
 

@@ -145,10 +145,36 @@ const getExpenseBreakdown = async (userId, { startDate, endDate, categoryId, per
 // full), for the dashboard's "this cycle" trend. Each transaction lands on
 // the day it counts for — a salary counted in the next cycle shows on that
 // cycle's first day.
-const getCycleTrend = async (userId, { periodOffset } = {}) => {
+// With budgeted: true, only the categories that have a budget in that cycle
+// are counted, and the budgets' total limit comes back with it (converted
+// to the display currency), for tracking spending against the budget.
+const getCycleTrend = async (userId, { periodOffset, budgeted = false } = {}) => {
   const displayCurrency = await getDisplayCurrency(userId)
   const cycleStartDay = await accountsService.getCycleStartDay(userId)
-  const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, Number(periodOffset) === 1 ? 1 : 0)
+  // 0 = this cycle, 1 = the last one, and so on (up to two years back), so
+  // a cycle can be laid against the one before it.
+  const offset = Math.min(24, Math.max(0, Math.floor(Number(periodOffset)) || 0))
+  const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, offset)
+
+  let budget = null
+  if (budgeted) {
+    const budgets = (await query(
+      `SELECT b.category_id, b.limit_amount, b.currency, c.name AS category_name
+       FROM budgets b LEFT JOIN categories c ON c.id = b.category_id
+       WHERE b.user_id = $1 AND b.period = $2`,
+      [userId, cycleKey(start)]
+    )).rows
+    let limit = 0
+    for (const b of budgets) {
+      const converted = await currencyService.convertAmount(Number(b.limit_amount), b.currency, displayCurrency)
+      if (converted.available) limit += converted.amount
+    }
+    budget = {
+      limit: Math.round(limit * 100) / 100,
+      categoryIds: budgets.map((b) => b.category_id),
+      categories: budgets.map((b) => b.category_name).filter(Boolean)
+    }
+  }
 
   const result = await query(
     `SELECT t.type, t.amount, a.currency, TO_CHAR(COALESCE(t.cycle_date, t.occurred_at), 'YYYY-MM-DD') AS day
@@ -156,8 +182,9 @@ const getCycleTrend = async (userId, { periodOffset } = {}) => {
      JOIN accounts a ON a.id = t.account_id
      WHERE t.user_id = $1
        AND COALESCE(t.cycle_date, t.occurred_at) >= $2
-       AND COALESCE(t.cycle_date, t.occurred_at) <= $3`,
-    [userId, start, end]
+       AND COALESCE(t.cycle_date, t.occurred_at) <= $3
+       AND ($4::int[] IS NULL OR t.category_id = ANY($4::int[]))`,
+    [userId, start, end, budget ? budget.categoryIds : null]
   )
 
   const byDay = new Map()
@@ -187,7 +214,8 @@ const getCycleTrend = async (userId, { periodOffset } = {}) => {
     })
   }
 
-  return { displayCurrency, period: cycleKey(start), periodLabel: periods.formatPeriodLabel(start, end, cycleStartDay), days, hasUnconverted }
+  const totalDays = Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()) - new Date(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1
+  return { displayCurrency, period: cycleKey(start), periodLabel: periods.formatPeriodLabel(start, end, cycleStartDay), startDate: dateKey(start), totalDays, days, hasUnconverted, budget }
 }
 
 // Income/expense/net for each of the last N budget cycles, oldest first.
