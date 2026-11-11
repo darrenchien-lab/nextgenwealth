@@ -34,7 +34,11 @@ const SQL = {
   markEmailVerified: loadSql('auth/markEmailVerified'),
   markVerificationTokenUsed: loadSql('auth/markVerificationTokenUsed'),
   getUserByEmailForResend: loadSql('auth/getUserByEmailForResend'),
-  pruneExpiredEmailVerificationTokens: loadSql('auth/pruneExpiredEmailVerificationTokens')
+  pruneExpiredEmailVerificationTokens: loadSql('auth/pruneExpiredEmailVerificationTokens'),
+  getUserById: loadSql('auth/getUserById'),
+  getPasswordHashById: loadSql('auth/getPasswordHashById'),
+  setSessionCutoff: loadSql('auth/setSessionCutoff'),
+  deleteUser: loadSql('auth/deleteUser')
 }
 
 // Repeated wrong passwords for one email from one address are refused for a
@@ -93,9 +97,12 @@ const register = async ({ email, password }) => {
   return user
 }
 
-const issueTokenForUser = (userId, { rememberMe = false } = {}) => {
+// expiresInSeconds overrides both defaults (used to hand out a replacement
+// token that lasts as long as the one it replaces).
+const issueTokenForUser = (userId, { rememberMe = false, expiresInSeconds } = {}) => {
   const jti = crypto.randomUUID()
-  const token = jwt.sign({ sub: userId, jti }, JWT_SECRET, { expiresIn: rememberMe ? JWT_REMEMBER_EXPIRES_IN : JWT_EXPIRES_IN })
+  const expiresIn = expiresInSeconds || (rememberMe ? JWT_REMEMBER_EXPIRES_IN : JWT_EXPIRES_IN)
+  const token = jwt.sign({ sub: userId, jti }, JWT_SECRET, { expiresIn })
   const decoded = jwt.decode(token)
   return { token, jti, expiresAt: new Date(decoded.exp * 1000) }
 }
@@ -127,6 +134,50 @@ const login = async ({ email, password, rememberMe }, { ip } = {}) => {
 
   const { token, expiresAt } = issueTokenForUser(user.id, { rememberMe: rememberMe === true })
   return { token, expiresAt }
+}
+
+const getMe = async (userId) => {
+  const user = (await query(SQL.getUserById, [userId])).rows[0]
+  if (!user) throw unauthorized('This account no longer exists')
+  return { id: user.id, email: user.email, createdAt: user.created_at, emailVerified: Boolean(user.email_verified_at) }
+}
+
+// Checks the signed-in user's own password before a sensitive change. A wrong
+// one is a 400 (not 401, which the app reads as "your session ended") and
+// counts toward the same lockout as wrong passwords at login.
+const assertOwnPassword = async (userId, password) => {
+  const key = `account|${userId}`
+  assertNotLockedOut(key)
+  const row = (await query(SQL.getPasswordHashById, [userId])).rows[0]
+  if (!row) throw unauthorized('This account no longer exists')
+  if (typeof password !== 'string' || !(await bcrypt.compare(password, row.password_hash))) {
+    recordFailedLogin(key)
+    throw new AppError(400, 'WRONG_PASSWORD', 'That password is incorrect')
+  }
+  failedLogins.delete(key)
+}
+
+// Changes the password, ends every other session, and returns a fresh token
+// (as long-lived as the current one) so this device stays signed in.
+const changePassword = async (userId, { currentPassword, newPassword } = {}, { tokenLifetimeSeconds } = {}) => {
+  if (typeof newPassword !== 'string' || newPassword.length < 8) throw badRequest('The new password must be at least 8 characters')
+  await assertOwnPassword(userId, currentPassword)
+  if (newPassword === currentPassword) throw badRequest('Choose a password different from your current one')
+  await query(SQL.updatePasswordHash, [await bcrypt.hash(newPassword, SALT_ROUNDS), userId])
+  await query(SQL.setSessionCutoff, [userId, 0])
+  const { token, expiresAt } = issueTokenForUser(userId, { expiresInSeconds: tokenLifetimeSeconds })
+  return { token, expiresAt }
+}
+
+// Ends every session on every device, this one included.
+const logoutEverywhere = async (userId) => {
+  await query(SQL.setSessionCutoff, [userId, 1])
+}
+
+// Deletes the account and, through the foreign keys, everything in it.
+const deleteAccount = async (userId, { password } = {}) => {
+  await assertOwnPassword(userId, password)
+  await query(SQL.deleteUser, [userId])
 }
 
 const logout = async (tokenId, expiresAt) => {
@@ -214,6 +265,10 @@ module.exports = {
   register,
   login,
   logout,
+  getMe,
+  changePassword,
+  logoutEverywhere,
+  deleteAccount,
   pruneExpiredRevokedTokens,
   issueTokenForUser,
   requestPasswordReset,

@@ -99,3 +99,66 @@ test('login: "keep me signed in" gives a long session, and repeated wrong passwo
   assert.equal(locked.status, 429)
   assert.equal(locked.body.code, 'TOO_MANY_ATTEMPTS')
 })
+
+async function signedInUser() {
+  const user = await createUnverifiedUser()
+  await pool.query('UPDATE users SET email_verified_at = NOW() WHERE id = $1', [user.id])
+  const res = await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })
+  return { user, token: res.body.token }
+}
+const bearer = (token) => ({ Authorization: `Bearer ${token}` })
+
+test('account: /auth/me returns the signed-in user', async () => {
+  const { user, token } = await signedInUser()
+  const res = await request(app).get('/auth/me').set(bearer(token))
+  assert.equal(res.status, 200)
+  assert.equal(res.body.user.email, user.email)
+  assert.equal(res.body.user.emailVerified, true)
+})
+
+test('account: changing the password needs the current one, ends other sessions, and keeps this device signed in', async () => {
+  const { user, token } = await signedInUser()
+  const other = (await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })).body.token
+
+  // A wrong current password is a 400, never a 401 (which the app reads as an ended session).
+  const wrong = await request(app).post('/auth/change-password').set(bearer(token)).send({ currentPassword: 'nope-nope', newPassword: 'BrandNewPass456' })
+  assert.equal(wrong.status, 400)
+  assert.equal(wrong.body.code, 'WRONG_PASSWORD')
+  assert.equal((await request(app).post('/auth/change-password').set(bearer(token)).send({ currentPassword: TEST_PASSWORD, newPassword: 'short' })).status, 400)
+
+  await new Promise((resolve) => setTimeout(resolve, 1100)) // tokens are stamped in whole seconds
+  const changed = await request(app).post('/auth/change-password').set(bearer(token)).send({ currentPassword: TEST_PASSWORD, newPassword: 'BrandNewPass456' })
+  assert.equal(changed.status, 200)
+  assert.ok(changed.body.token)
+
+  assert.equal((await request(app).get('/auth/me').set(bearer(token))).status, 401, 'the old token stops working')
+  assert.equal((await request(app).get('/auth/me').set(bearer(other))).status, 401, 'so does another device')
+  assert.equal((await request(app).get('/auth/me').set(bearer(changed.body.token))).status, 200, 'the replacement works')
+  assert.equal((await request(app).post('/auth/login').send({ email: user.email, password: 'BrandNewPass456' })).status, 200)
+  assert.equal((await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })).status, 401)
+})
+
+test('account: signing out everywhere ends every session', async () => {
+  const { user, token } = await signedInUser()
+  const other = (await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })).body.token
+  assert.equal((await request(app).post('/auth/logout-all').set(bearer(token))).status, 200)
+  assert.equal((await request(app).get('/auth/me').set(bearer(token))).status, 401)
+  assert.equal((await request(app).get('/auth/me').set(bearer(other))).status, 401)
+  await new Promise((resolve) => setTimeout(resolve, 1100))
+  const again = await request(app).post('/auth/login').send({ email: user.email, password: TEST_PASSWORD })
+  assert.equal((await request(app).get('/auth/me').set(bearer(again.body.token))).status, 200, 'a new login works')
+})
+
+test('account: deleting the account needs the password and removes the user and their data', async () => {
+  const { user, token } = await signedInUser()
+  await request(app).post('/accounts').set(bearer(token)).send({ name: 'Doomed', type: 'cash', currency: 'IDR', balance: 100 })
+
+  const wrong = await request(app).delete('/auth/account').set(bearer(token)).send({ password: 'not-the-password' })
+  assert.equal(wrong.status, 400)
+  assert.equal((await pool.query('SELECT 1 FROM users WHERE id = $1', [user.id])).rowCount, 1, 'still there after a wrong password')
+
+  assert.equal((await request(app).delete('/auth/account').set(bearer(token)).send({ password: TEST_PASSWORD })).status, 200)
+  assert.equal((await pool.query('SELECT 1 FROM users WHERE id = $1', [user.id])).rowCount, 0)
+  assert.equal((await pool.query('SELECT 1 FROM accounts WHERE user_id = $1', [user.id])).rowCount, 0, 'their accounts went with them')
+  assert.equal((await request(app).get('/auth/me').set(bearer(token))).status, 401, 'the old token no longer works')
+})

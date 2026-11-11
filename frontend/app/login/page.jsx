@@ -30,6 +30,7 @@ export default function LoginPage() {
       }
       const params = new URLSearchParams(window.location.search)
       if (params.get('expired')) setNotice('Your session has ended. Log in again to continue.')
+      if (params.get('deleted')) setNotice('Your account and all its data were deleted.')
       const remembered = window.localStorage.getItem('nextgen_last_email')
       if (remembered) setEmail(remembered)
     }

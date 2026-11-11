@@ -19,6 +19,25 @@ router.post('/logout', requireAuth, asyncHandler(async (req, res) => {
   res.json({ success: true })
 }))
 
+router.get('/me', requireAuth, asyncHandler(async (req, res) => {
+  res.json({ success: true, user: await authService.getMe(req.userId) })
+}))
+
+router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
+  const { token, expiresAt } = await authService.changePassword(req.userId, req.body || {}, { tokenLifetimeSeconds: req.tokenLifetimeSeconds })
+  res.json({ success: true, token, expiresAt })
+}))
+
+router.post('/logout-all', requireAuth, asyncHandler(async (req, res) => {
+  await authService.logoutEverywhere(req.userId)
+  res.json({ success: true })
+}))
+
+router.delete('/account', requireAuth, asyncHandler(async (req, res) => {
+  await authService.deleteAccount(req.userId, req.body || {})
+  res.json({ success: true })
+}))
+
 router.post('/forgot-password', asyncHandler(async (req, res) => {
   const result = await authService.requestPasswordReset(req.body?.email)
   res.json({ success: true, ...result })
