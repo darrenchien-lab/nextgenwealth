@@ -161,8 +161,9 @@ const setDisplayCurrency = async (userId, currency) => {
 
 // Defines when a user's "month" starts for period-based reporting (dashboard
 // summary, cash flow, monthly trend, expense breakdown, budgets) — e.g. a
-// payday-based cutoff instead of the calendar's 1st. Capped at 28 so every
-// month (including February) actually has that day.
+// payday-based cutoff instead of the calendar's 1st. Any day 1–31 works: in
+// a month too short for it (say the 31st in February), the cycle starts on
+// that month's last day (see shared/periods).
 const getCycleStartDay = async (userId) => {
   const result = await query(SQL.getCycleStartDay, [userId])
   return result.rows[0]?.budget_cycle_start_day || 1
@@ -170,8 +171,8 @@ const getCycleStartDay = async (userId) => {
 
 const setCycleStartDay = async (userId, day) => {
   const numericDay = Number(day)
-  if (!Number.isInteger(numericDay) || numericDay < 1 || numericDay > 28) {
-    throw badRequest('cycleStartDay must be an integer between 1 and 28')
+  if (!Number.isInteger(numericDay) || numericDay < 1 || numericDay > 31) {
+    throw badRequest('cycleStartDay must be an integer between 1 and 31')
   }
   await query(SQL.setCycleStartDay, [numericDay, userId])
   return { cycleStartDay: numericDay }

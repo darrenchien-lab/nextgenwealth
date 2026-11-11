@@ -6,28 +6,42 @@
 // budgets rather than the calendar. No DB access here; callers fetch a
 // user's cycleStartDay (accountsService.getCycleStartDay) and pass it in.
 
+// The day a cycle starts in a given month. A start day later than the month
+// is long (29–31 in a shorter month) falls on that month's last day instead,
+// so a payday on the 31st starts cycles on Jan 31, Feb 28, Mar 31, Apr 30...
+// `month` may be out of range (-1 = December of the year before); it wraps.
+const cycleStartIn = (year, month, cycleStartDay) => {
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  return new Date(year, month, Math.min(cycleStartDay, daysInMonth))
+}
+
+// The cycle that starts in the given month, as [start, end]: it ends at
+// 23:59:59 the day before the next cycle starts.
+const cycleStartingIn = (year, month, cycleStartDay) => {
+  const start = cycleStartIn(year, month, cycleStartDay)
+  const next = cycleStartIn(year, month + 1, cycleStartDay)
+  return { start, end: new Date(next.getFullYear(), next.getMonth(), next.getDate() - 1, 23, 59, 59) }
+}
+
 // The cycle containing `referenceDate`, as [start, end] Date objects (end is
 // 23:59:59 the day before the next cycle starts).
 const getCurrentPeriodBounds = (cycleStartDay, referenceDate = new Date()) => {
-  let year = referenceDate.getFullYear()
-  let month = referenceDate.getMonth()
-  if (referenceDate.getDate() < cycleStartDay) {
-    month -= 1
-    if (month < 0) {
-      month = 11
-      year -= 1
-    }
-  }
-  const start = new Date(year, month, cycleStartDay)
-  const end = new Date(year, month + 1, cycleStartDay - 1, 23, 59, 59)
-  return { start, end }
+  const year = referenceDate.getFullYear()
+  const month = referenceDate.getMonth()
+  const startsThisMonth = cycleStartIn(year, month, cycleStartDay)
+  // Before this month's start day, the date still belongs to last month's cycle.
+  return referenceDate.getDate() < startsThisMonth.getDate()
+    ? cycleStartingIn(year, month - 1, cycleStartDay)
+    : cycleStartingIn(year, month, cycleStartDay)
 }
+
+// The start of the cycle after the one that starts at `start`.
+const nextPeriodStart = (cycleStartDay, start) => cycleStartIn(start.getFullYear(), start.getMonth() + 1, cycleStartDay)
 
 // The cycle `monthsBack` full cycles before the one containing referenceDate.
 const getPeriodBoundsForOffset = (cycleStartDay, monthsBack, referenceDate = new Date()) => {
   const { start } = getCurrentPeriodBounds(cycleStartDay, referenceDate)
-  const shifted = new Date(start.getFullYear(), start.getMonth() - monthsBack, cycleStartDay)
-  return getCurrentPeriodBounds(cycleStartDay, shifted)
+  return cycleStartingIn(start.getFullYear(), start.getMonth() - monthsBack, cycleStartDay)
 }
 
 // 'YYYY-MM' label for the cycle a date falls into — the label is the
@@ -43,9 +57,7 @@ const periodKeyForDate = (cycleStartDay, date = new Date()) => {
 // the cycle starts in).
 const periodKeyToBounds = (cycleStartDay, periodKey) => {
   const [year, month] = periodKey.split('-').map(Number)
-  const start = new Date(year, month - 1, cycleStartDay)
-  const end = new Date(year, month, cycleStartDay - 1, 23, 59, 59)
-  return { start, end }
+  return cycleStartingIn(year, month - 1, cycleStartDay)
 }
 
 // A calendar-month cycle (the default) reads as "September 2026"; a
@@ -62,6 +74,7 @@ const formatPeriodLabel = (start, end, cycleStartDay) => {
 module.exports = {
   getCurrentPeriodBounds,
   getPeriodBoundsForOffset,
+  nextPeriodStart,
   periodKeyForDate,
   periodKeyToBounds,
   formatPeriodLabel

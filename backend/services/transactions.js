@@ -44,7 +44,7 @@ const toLocalDate = (value) => {
 const nextCycleDateFor = async (userId, occurredAt) => {
   const cycleStartDay = await accountsService.getCycleStartDay(userId)
   const { start } = periods.getCurrentPeriodBounds(cycleStartDay, toLocalDate(occurredAt))
-  const next = new Date(start.getFullYear(), start.getMonth() + 1, cycleStartDay)
+  const next = periods.nextPeriodStart(cycleStartDay, start)
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}T00:00:00`
 }
 
