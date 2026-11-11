@@ -14,6 +14,7 @@ import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SpendingPaceCard from '@/components/SpendingPaceCard'
 import { todayInputValue } from '@/lib/dates'
+import { getHideAmountsDefault } from '@/lib/preferences'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
 
 
@@ -50,6 +51,14 @@ export default function DashboardPage() {
   const [payDate, setPayDate] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // Balance cards start hidden when that is the saved preference (Settings).
+  useEffect(() => {
+    function init() {
+      setHideAmounts(getHideAmountsDefault())
+    }
+    init()
+  }, [])
 
   useEffect(() => {
     async function load() {

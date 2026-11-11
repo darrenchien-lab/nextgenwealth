@@ -38,11 +38,20 @@ export default function SummaryCard({
           </button>
         )}
       </div>
-      {children ?? (
-        <p title={hidden ? undefined : value} className="mt-2 truncate text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {hidden ? '••••••••' : value}
+      {children ?? (hidden ? (
+        // Six dots, one per space, in place of the figure: always the same
+        // number, so the amount's size isn't given away. The currency symbol stays.
+        <p className="mt-2 flex items-center gap-2 text-lg font-semibold text-gray-400 dark:text-gray-500" aria-label="Amount hidden">
+          <span aria-hidden="true">{String(value).match(/^[^\d-]*/)[0].trim()}</span>
+          <span aria-hidden="true" className="flex select-none items-center gap-2">
+            {Array.from({ length: 6 }, (_, i) => (
+              <span key={i} className="h-2 w-2 rounded-full bg-current" />
+            ))}
+          </span>
         </p>
-      )}
+      ) : (
+        <p title={value} className="mt-2 truncate text-lg font-semibold text-gray-900 dark:text-gray-100">{value}</p>
+      ))}
       {/* A percentage change gives no amount away, so it stays visible when
           the amount itself is masked. */}
       {((hint && !hidden) || (change !== undefined && change !== null)) && (
