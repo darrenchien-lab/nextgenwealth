@@ -395,7 +395,7 @@ export default function AccountsPage() {
       {actionError && <p className="text-sm text-red-600 dark:text-red-400">{actionError}</p>}
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
       <div ref={accountsCardRef} className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
         <CardHeader
           icon={Landmark}
