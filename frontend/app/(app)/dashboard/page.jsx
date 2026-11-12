@@ -3,16 +3,17 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Wallet, TrendingUp, TrendingDown, PiggyBank, Landmark, HeartPulse, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, Landmark, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
-import HealthGauge from '@/components/HealthGauge'
 import CardHeader from '@/components/CardHeader'
 import ScrollFadeList from '@/components/ScrollFadeList'
 import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SpendingPaceCard from '@/components/SpendingPaceCard'
+import RecentTransactionsCard from '@/components/RecentTransactionsCard'
+import QuickAddTransactionModal from '@/components/QuickAddTransactionModal'
 import { todayInputValue } from '@/lib/dates'
 import { getHideAmountsDefault } from '@/lib/preferences'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
@@ -36,6 +37,14 @@ export default function DashboardPage() {
   const [cycleTrend, setCycleTrend] = useState(null)
   const [previousTrend, setPreviousTrend] = useState(null)
   const [budgetTrend, setBudgetTrend] = useState(null)
+  const [netWorthTrend, setNetWorthTrend] = useState(null)
+  const [budgetList, setBudgetList] = useState(null)
+  const [categories, setCategories] = useState([])
+  const [accounts, setAccounts] = useState([])
+  const [recent, setRecent] = useState(null)
+  const [recentPeriod, setRecentPeriod] = useState(null)
+  const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [breakdown, setBreakdown] = useState(null)
   const chartTheme = useChartTheme()
   const [upcomingBills, setUpcomingBills] = useState(null)
@@ -63,7 +72,7 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [summaryData, trendsData, allocationData, cycleTrendData, previousTrendData, budgetTrendData, breakdownData, billsData, goalsData, ratesData] = await Promise.all([
+        const [summaryData, trendsData, allocationData, cycleTrendData, previousTrendData, budgetTrendData, breakdownData, billsData, goalsData, ratesData, netWorthTrendData, budgetsData, categoriesData, accountsData] = await Promise.all([
           request(`/reports/dashboard?periodOffset=${periodOffset}`),
           request('/reports/trends?months=6'),
           request(`/reports/asset-allocation?periodOffset=${periodOffset}`),
@@ -73,14 +82,30 @@ export default function DashboardPage() {
           request(`/reports/expense-breakdown?periodOffset=${periodOffset}`),
           request('/bills/upcoming'),
           request('/goals'),
-          request('/accounts/exchange-rates')
+          request('/accounts/exchange-rates'),
+          request(`/reports/net-worth-cycle?periodOffset=${periodOffset}`),
+          request(`/budgets?periodOffset=${periodOffset}`),
+          request('/categories'),
+          request('/accounts')
         ])
+        // The newest transactions overall for this cycle (so something just
+        // recorded, even with an older date, shows up); for last cycle, that
+        // cycle's own latest, like every other card on the page.
+        const recentData = periodOffset === 1
+          ? await request(`/transactions?period=${budgetsData.period}&limit=6`)
+          : await request('/transactions?limit=6')
         setSummary(summaryData)
         setTrends(trendsData.trends)
         setAllocation(allocationData)
         setCycleTrend(cycleTrendData)
         setPreviousTrend(previousTrendData)
         setBudgetTrend(budgetTrendData)
+        setNetWorthTrend(netWorthTrendData)
+        setBudgetList(budgetsData)
+        setCategories(categoriesData.categories)
+        setAccounts(accountsData.accounts)
+        setRecent(recentData.transactions)
+        setRecentPeriod(periodOffset === 1 ? budgetsData.period : null)
         setBreakdown(breakdownData)
         setUpcomingBills(billsData.bills)
         setBillsTotal({ total: billsData.total, displayCurrency: billsData.displayCurrency })
@@ -93,7 +118,7 @@ export default function DashboardPage() {
       }
     }
     load()
-  }, [periodOffset])
+  }, [periodOffset, reloadKey])
 
   function handlePayBill(bill) {
     setPayError('')
@@ -149,7 +174,7 @@ export default function DashboardPage() {
     : []
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Dashboard</h1>
@@ -201,35 +226,80 @@ export default function DashboardPage() {
 
       {rateRefreshError && <p className="text-sm text-red-600 dark:text-red-400">{rateRefreshError}</p>}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.7fr)]">
         <SummaryCard
-          icon={Wallet}
-          color="blue"
-          label="Total Balance"
-          value={formatCurrency(summary.totalBalance, currency)}
-          maskable
-          hidden={hideAmounts}
-          onToggleHidden={() => setHideAmounts((v) => !v)}
-        />
-        <SummaryCard icon={TrendingUp} color="emerald" label="Income" value={formatCurrency(summary.income, currency)} hint={periodLabel} change={changes?.income} />
-        <SummaryCard icon={TrendingDown} color="red" label="Expense" value={formatCurrency(summary.expense, currency)} hint={periodLabel} change={changes?.expense} />
-        <SummaryCard icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} change={changes?.savingsRate} changeUnit=" pts" />
-        <SummaryCard
+          hero
+          className="col-span-2 lg:col-span-3"
           icon={Landmark}
           color="violet"
           label="Net Worth"
           value={formatCurrency(summary.netWorth, currency)}
           hint="this cycle"
           change={changes?.netWorth}
+          spark={netWorthTrend?.points.map((p) => p.netWorth)}
+          parts={[
+            { label: 'Accounts', color: 'blue', href: '/accounts', value: summary.netWorthParts?.accounts, amount: summary.netWorthParts ? formatCurrency(summary.netWorthParts.accounts, currency) : undefined },
+            { label: 'Investments', color: 'violet', href: '/investments', value: summary.netWorthParts?.investments, amount: summary.netWorthParts ? formatCurrency(summary.netWorthParts.investments, currency) : undefined }
+          ]}
           maskable
           hidden={hideAmounts}
           onToggleHidden={() => setHideAmounts((v) => !v)}
         />
-        <SummaryCard icon={HeartPulse} color="slate" label="Financial Health">
-          <div className="mt-1.5 flex justify-center">
-            <HealthGauge score={summary.financialHealthScore} size={48} strokeWidth={5} />
-          </div>
-        </SummaryCard>
+        <SummaryCard icon={TrendingUp} color="emerald" label="Income" value={formatCurrency(summary.income, currency)} hint={periodLabel} />
+        <SummaryCard icon={TrendingDown} color="red" label="Expense" value={formatCurrency(summary.expense, currency)} hint={periodLabel} />
+        <SummaryCard className="col-span-2 lg:col-span-1" icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} />
+        <div className="order-last col-span-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700 flex flex-col lg:order-none lg:col-span-1 lg:col-start-4 lg:row-span-2 lg:row-start-1">
+          <CardHeader
+            icon={PieIcon}
+            color="amber"
+            title="Asset Allocation"
+            subtitle={allocation?.asOf
+              ? `As of ${new Date(`${allocation.asOf}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              : 'Now'}
+          />
+          {allocation && allocation.allocation.length > 0 ? (
+            <div className="flex flex-col items-center gap-3 lg:flex-1 lg:justify-center xl:flex-row xl:gap-5">
+              <div className="h-24 w-24 shrink-0 xl:h-32 xl:w-32">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={allocationSlices}
+                      dataKey="amount"
+                      nameKey="type"
+                      innerRadius="57%"
+                      outerRadius="93%"
+                      paddingAngle={2}
+                      cornerRadius={3}
+                    >
+                      {allocationSlices.map((entry) => (
+                        <Cell key={entry.type} fill={entry.color} stroke="none" />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="w-full min-w-0 xl:flex-1">
+                <ScrollFadeList className="h-24 w-full min-w-0 space-y-0.5 pr-1 xl:h-auto xl:max-h-44">
+                  {allocationSlices.map((entry) => (
+                    <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs xl:text-[13px]">
+                      <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
+                        <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
+                      </span>
+                      <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
+                    </li>
+                  ))}
+                </ScrollFadeList>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-36 flex-col items-center justify-center gap-2 text-center">
+              <p className="text-sm text-gray-500 dark:text-gray-400">Add your bank accounts, e-wallets and cash to see how your money is spread.</p>
+              <Link href="/accounts" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">Add an account</Link>
+            </div>
+          )}
+        </div>
       </div>
 
       {summary.hasUnconverted && (
@@ -242,7 +312,7 @@ export default function DashboardPage() {
         <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2">
           <CardHeader icon={TrendingUp} color="emerald" title="Cash Flow (last 6 months)" />
           {hasTrendData ? (
-            <div className="min-h-[210px] flex-1">
+            <div className="min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trends}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
@@ -260,7 +330,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
           <CardHeader
             icon={ShoppingBag}
             color="red"
@@ -268,11 +338,11 @@ export default function DashboardPage() {
             subtitle={breakdown && breakdown.total > 0 ? `${formatCurrency(breakdown.total, breakdown.displayCurrency)} spent` : ''}
           />
           {expenseSlices.length > 0 ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-32 w-32 shrink-0">
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-6">
+              <div className="h-28 w-28 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={expenseSlices} dataKey="amount" nameKey="categoryName" innerRadius={36} outerRadius={60} paddingAngle={2} cornerRadius={3}>
+                    <Pie data={expenseSlices} dataKey="amount" nameKey="categoryName" innerRadius={32} outerRadius={52} paddingAngle={2} cornerRadius={3}>
                       {expenseSlices.map((entry) => (
                         <Cell key={entry.categoryName} fill={entry.color} stroke="none" />
                       ))}
@@ -281,7 +351,7 @@ export default function DashboardPage() {
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <ScrollFadeList className="h-40 w-full min-w-0 space-y-1 pr-1">
+              <ScrollFadeList className="h-28 w-full min-w-0 space-y-0.5 pr-1">
                 {expenseSlices.map((entry) => (
                   <li key={entry.categoryName} title={formatCurrency(entry.amount, breakdown.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs">
                     <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
@@ -297,63 +367,12 @@ export default function DashboardPage() {
             <EmptyChartState label="No spending this cycle yet" />
           )}
         </div>
-
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-          <CardHeader
-            icon={PieIcon}
-            color="amber"
-            title="Asset Allocation"
-            subtitle={allocation?.asOf
-              ? `As of ${new Date(`${allocation.asOf}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
-              : 'Now'}
-          />
-          {allocation && allocation.allocation.length > 0 ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-32 w-32 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={allocationSlices}
-                      dataKey="amount"
-                      nameKey="type"
-                      innerRadius={36}
-                      outerRadius={60}
-                      paddingAngle={2}
-                      cornerRadius={3}
-                    >
-                      {allocationSlices.map((entry) => (
-                        <Cell key={entry.type} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <ScrollFadeList className="h-40 w-full min-w-0 space-y-1 pr-1">
-                {allocationSlices.map((entry) => (
-                  <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs">
-                    <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
-                      <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
-                    </span>
-                    <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
-                  </li>
-                ))}
-              </ScrollFadeList>
-            </div>
-          ) : (
-            <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
-              <p className="text-sm text-gray-500 dark:text-gray-400">Add your bank accounts, e-wallets and cash to see how your money is spread.</p>
-              <Link href="/accounts" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">Add an account</Link>
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <SpendingPaceCard current={cycleTrend} previous={previousTrend} budgeted={budgetTrend} currency={currency} className="lg:col-span-2 lg:h-[300px]" />
+        <SpendingPaceCard current={cycleTrend} previous={previousTrend} budgeted={budgetTrend} budgets={budgetList?.budgets} categories={categories} currency={currency} className="lg:col-span-2 lg:h-[250px]" />
 
-        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[300px]">
+        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[250px]">
           <CardHeader
             icon={Receipt}
             color="red"
@@ -406,7 +425,7 @@ export default function DashboardPage() {
           </ScrollFadeBox>
         </div>
 
-        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[300px]">
+        <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[250px]">
           <CardHeader
             icon={Target}
             color="violet"
@@ -442,6 +461,17 @@ export default function DashboardPage() {
           </ScrollFadeBox>
         </div>
       </div>
+
+      <RecentTransactionsCard transactions={recent} accounts={accounts} categories={categories} hideAmounts={hideAmounts} cycleLabel={recentPeriod ? periodLabel : null} seeAllHref={recentPeriod ? `/transactions?period=${recentPeriod}` : '/transactions'} onAdd={() => setShowQuickAdd(true)} />
+
+      {showQuickAdd && (
+        <QuickAddTransactionModal
+          accounts={accounts}
+          categories={categories}
+          onClose={() => setShowQuickAdd(false)}
+          onSaved={() => { setShowQuickAdd(false); setReloadKey((k) => k + 1) }}
+        />
+      )}
 
       <ConfirmDialog
         open={!!payingBill}
