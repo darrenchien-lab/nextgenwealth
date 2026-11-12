@@ -100,3 +100,17 @@ test('list: same-day transactions show the most recently recorded first, and a p
 
   assert.equal((await as.get('/transactions?period=2026-13')).status, 400)
 })
+
+test('list: limit keeps only the newest transactions, newest first, and rejects a bad value', async () => {
+  const { as } = await createTestUser()
+  const account = (await as.post('/accounts').send({ name: 'Main', type: 'bank', currency: 'IDR', balance: 1000000 })).body.account
+  for (const [notes, occurredAt] of [['oldest', '2026-01-01'], ['middle', '2026-01-02'], ['newest', '2026-01-03']]) {
+    await as.post('/transactions').send({ accountId: account.id, type: 'expense', amount: 1000, occurredAt, notes })
+  }
+  const two = (await as.get('/transactions?limit=2')).body.transactions
+  assert.deepEqual(two.map((t) => t.notes), ['newest', 'middle'])
+  assert.equal((await as.get('/transactions')).body.transactions.length, 3)
+  assert.equal((await as.get('/transactions?limit=0')).status, 400)
+  assert.equal((await as.get('/transactions?limit=abc')).status, 400)
+  assert.equal((await as.get('/transactions?limit=101')).status, 400)
+})

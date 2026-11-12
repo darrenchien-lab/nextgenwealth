@@ -15,14 +15,15 @@ router.post('/', asyncHandler(async (req, res) => {
 }))
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { startDate, endDate, period, accountId, categoryId, type } = req.query
+  const { startDate, endDate, period, accountId, categoryId, type, limit } = req.query
   const transactions = await transactionsService.listTransactions(req.userId, {
     startDate,
     endDate,
     period,
     accountId: accountId ? Number(accountId) : undefined,
     categoryId: categoryId ? Number(categoryId) : undefined,
-    type
+    type,
+    limit
   })
   // A period listing also says which cycle it is, for the cycle navigator.
   const cycle = period ? await transactionsService.describeCycle(req.userId, period) : null

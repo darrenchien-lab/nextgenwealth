@@ -246,7 +246,8 @@ const describeCycle = async (userId, requested) => {
 // budgets and the dashboard do (counting "count in next cycle" ones in the
 // cycle they were moved to); startDate/endDate filter by the real date.
 // Within a day, the most recently recorded comes first.
-const listTransactions = async (userId, { startDate, endDate, period, accountId, categoryId, type } = {}) => {
+// limit (1–100) keeps only the newest that many, e.g. for a "recent" list.
+const listTransactions = async (userId, { startDate, endDate, period, accountId, categoryId, type, limit } = {}) => {
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
     throw badRequest('startDate must not be after endDate')
   }
@@ -269,8 +270,16 @@ const listTransactions = async (userId, { startDate, endDate, period, accountId,
     conditions.push(`type = $${params.length}`)
   }
 
+  let limitClause = ''
+  if (limit !== undefined && limit !== null && limit !== '') {
+    const count = Number(limit)
+    if (!Number.isInteger(count) || count < 1 || count > 100) throw badRequest('limit must be a whole number from 1 to 100')
+    params.push(count)
+    limitClause = ` LIMIT $${params.length}`
+  }
+
   const result = await query(
-    `SELECT * FROM transactions WHERE ${conditions.join(' AND ')} ORDER BY occurred_at::date DESC, created_at DESC, id DESC`,
+    `SELECT * FROM transactions WHERE ${conditions.join(' AND ')} ORDER BY occurred_at::date DESC, created_at DESC, id DESC${limitClause}`,
     params
   )
   return result.rows
