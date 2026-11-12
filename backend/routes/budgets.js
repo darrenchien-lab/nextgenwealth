@@ -15,7 +15,9 @@ router.get('/', asyncHandler(async (req, res) => {
   // currentPeriod lets the page tell whether it is showing the cycle in
   // progress or browsing an earlier/later one.
   const current = await budgetsService.describePeriod(req.userId)
-  const { period, periodLabel } = req.query.period ? await budgetsService.describePeriod(req.userId, req.query.period) : current
+  // ?period=YYYY-MM names a cycle; ?periodOffset=1 means the one before this.
+  const requested = req.query.period || (req.query.periodOffset !== undefined ? await budgetsService.periodForOffset(req.userId, req.query.periodOffset) : null)
+  const { period, periodLabel } = requested ? await budgetsService.describePeriod(req.userId, requested) : current
   const budgets = await budgetsService.listBudgetsWithUsage(req.userId, period)
   res.json({ success: true, period, periodLabel, currentPeriod: current.period, budgets })
 }))

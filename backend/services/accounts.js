@@ -227,6 +227,10 @@ const getNetWorth = async (userId) => {
   return {
     displayCurrency,
     netWorth: Math.round(netWorth * 100) / 100,
+    // What it is made of: account balances (credit cards counted negative)
+    // and the market value of investments.
+    accounts: Math.round((netWorth - investments.total) * 100) / 100,
+    investments: Math.round(investments.total * 100) / 100,
     fullyConverted: allConverted
   }
 }

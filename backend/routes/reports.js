@@ -43,6 +43,11 @@ router.get('/cycle-trend', asyncHandler(async (req, res) => {
   res.json({ success: true, ...trend })
 }))
 
+router.get('/net-worth-cycle', asyncHandler(async (req, res) => {
+  const trend = await reportsService.getNetWorthCycleTrend(req.userId, { periodOffset: req.query.periodOffset })
+  res.json({ success: true, ...trend })
+}))
+
 router.get('/trends', asyncHandler(async (req, res) => {
   const months = Number(req.query.months || 6)
   const trends = await reportsService.getTrends(req.userId, months)

@@ -13,7 +13,8 @@ const SQL = {
   insertNetWorthSnapshot: loadSql('reports/insertNetWorthSnapshot'),
   listAllUserIds: loadSql('reports/listAllUserIds'),
   getNetWorthHistory: loadSql('reports/getNetWorthHistory'),
-  listCarriedOverTransactions: loadSql('reports/listCarriedOverTransactions')
+  listCarriedOverTransactions: loadSql('reports/listCarriedOverTransactions'),
+  listCarriedOutTransactions: loadSql('reports/listCarriedOutTransactions')
 }
 
 const getTotalBalance = async (userId, displayCurrency) => {
@@ -163,6 +164,18 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
   // misleading "-100%". Net worth still compares, since it never resets.
   const periodIsEmpty = income === 0 && expense === 0
 
+  // For the cycle in progress, the net worth figure split into accounts and
+  // investments. The cycle adjustment above is money in accounts, so it comes
+  // off the accounts side and the two parts add up to the figure shown. A
+  // closed cycle has no such split (it is a past snapshot), so null.
+  const isLive = !(end && end < new Date())
+  const netWorthParts = changes && isLive
+    ? {
+        accounts: Math.round((liveNetWorth.accounts - changes.carriedOutOfPeriod) * 100) / 100,
+        investments: liveNetWorth.investments
+      }
+    : null
+
   const netWorthChange = changes && changes.netWorthAtPeriodStart !== null
     ? pctChange(changes.netWorthAtPeriodStart - changes.carriedIntoPeriod, netWorth)
     : null
@@ -175,6 +188,7 @@ const getDashboardSummary = async (userId, { startDate, endDate, periodOffset } 
     net,
     savingsRate,
     netWorth,
+    netWorthParts,
     financialHealthScore,
     periodLabel,
     periodOffset: Number(periodOffset) === 1 ? 1 : 0,
@@ -334,6 +348,48 @@ const getNetWorthHistory = async (userId) => {
   return history
 }
 
+// Net worth day by day across one budget cycle (0 = this one, 1 = the last),
+// on the same footing as the dashboard's net worth figure and its change:
+// the cycle's opening net worth less what was already counted in it, and each
+// day less the money that arrived early but belongs to the next cycle. So the
+// line ends exactly on the dashboard's figure and never points the other way
+// from its percentage.
+const getNetWorthCycleTrend = async (userId, { periodOffset } = {}) => {
+  const offset = Math.min(24, Math.max(0, Math.floor(Number(periodOffset)) || 0))
+  const displayCurrency = await accountsService.getDisplayCurrency(userId)
+  const cycleStartDay = await accountsService.getCycleStartDay(userId)
+  const { start, end } = periods.getPeriodBoundsForOffset(cycleStartDay, offset)
+  const startKey = toDateKey(start)
+  const endKey = toDateKey(end)
+  const todayKey = toDateKey(new Date())
+  const lastKey = endKey < todayKey ? endKey : todayKey
+  const round = (n) => Math.round(n * 100) / 100
+
+  const carriedIn = await getCarriedOverAmount(userId, start, displayCurrency)
+  const carriedOut = []
+  for (const row of (await query(SQL.listCarriedOutTransactions, [userId, new Date(end.getTime() + 1000)])).rows) {
+    const { amount, available } = await currencyService.convertAmount(Number(row.amount), row.currency, displayCurrency)
+    if (available) carriedOut.push({ day: row.day, amount: row.type === 'expense' ? -amount : amount })
+  }
+  const carriedOutBy = (key) => carriedOut.filter((c) => c.day <= key).reduce((sum, c) => sum + c.amount, 0)
+
+  const points = []
+  const opening = await getNetWorthAsOf(userId, start, displayCurrency)
+  if (opening !== null) points.push({ date: startKey, netWorth: round(opening - carriedIn) })
+  for (const row of await getNetWorthHistory(userId)) {
+    if (row.date > startKey && row.date <= lastKey) points.push({ date: row.date, netWorth: round(row.netWorth - carriedOutBy(row.date)) })
+  }
+  // Today's point is the live figure, not the last daily snapshot.
+  if (lastKey === todayKey) {
+    const live = (await accountsService.getNetWorth(userId)).netWorth
+    const todayPoint = { date: todayKey, netWorth: round(live - carriedOutBy(todayKey)) }
+    const index = points.findIndex((p) => p.date === todayKey)
+    if (index >= 0) points[index] = todayPoint
+    else points.push(todayPoint)
+  }
+  return { displayCurrency, startDate: startKey, endDate: endKey, points }
+}
+
 const PERIOD_KEY = /^\d{4}-(0[1-9]|1[0-2])$/
 const round2 = (n) => Math.round(n * 100) / 100
 const COMPARE_CYCLES = 12
@@ -474,6 +530,7 @@ module.exports = {
   getCashFlow,
   getExpenseBreakdown,
   getCycleTrend,
+  getNetWorthCycleTrend,
   getTrends,
   getAssetAllocation,
   takeNetWorthSnapshot,

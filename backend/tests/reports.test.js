@@ -79,3 +79,30 @@ test('reports: the export is a PDF for this or the last cycle, and Excel is no l
   assert.equal((await as.get('/reports/export?format=pdf&periodOffset=1')).status, 200)
   assert.equal((await as.get('/reports/export?format=excel')).status, 400)
 })
+
+test('reports: the cycle net worth line ends on the dashboard figure, even with money counted in the next cycle', async () => {
+  const { as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'IDR' })
+  const account = (await as.post('/accounts').send({ name: 'Main', type: 'bank', currency: 'IDR', balance: 1000000 })).body.account
+  const category = (await as.post('/categories').send({ name: 'Pay' })).body.category
+  // Money received today that belongs to the next cycle: it lifts real net worth, not this cycle's.
+  await as.post('/transactions').send({ accountId: account.id, categoryId: category.id, type: 'income', amount: 500000, countInNextCycle: true })
+
+  const dashboard = (await as.get('/reports/dashboard')).body
+  const trend = (await as.get('/reports/net-worth-cycle')).body
+  assert.ok(trend.points.length >= 1)
+  assert.equal(trend.points[trend.points.length - 1].netWorth, dashboard.netWorth)
+  assert.equal(dashboard.netWorth, 1000000, 'the early money is left out of this cycle')
+  // The split into accounts and investments adds up to the figure shown.
+  assert.equal(dashboard.netWorthParts.accounts + dashboard.netWorthParts.investments, dashboard.netWorth)
+  assert.equal((await as.get('/reports/dashboard?periodOffset=1')).body.netWorthParts, null)
+  assert.equal((await as.get('/reports/net-worth-cycle?periodOffset=1')).status, 200)
+})
+
+test('budgets: the list can be asked for an earlier cycle by offset', async () => {
+  const { as } = await createTestUser()
+  const current = (await as.get('/budgets')).body
+  const previous = (await as.get('/budgets?periodOffset=1')).body
+  assert.equal(previous.currentPeriod, current.period)
+  assert.notEqual(previous.period, current.period)
+})

@@ -137,4 +137,7 @@ const getForecast = async (userId, budgetId) => {
   return { available: true, forecast: Math.round(average * 100) / 100 }
 }
 
-module.exports = { createBudget, getBudgetById, updateBudget, deleteBudget, describePeriod, listBudgetsWithUsage, getForecast }
+// The 'YYYY-MM' key of the cycle `offset` cycles before the current one.
+const periodForOffset = async (userId, offset) => shiftPeriod(await currentPeriod(userId), Math.min(24, Math.max(0, Math.floor(Number(offset)) || 0)))
+
+module.exports = { periodForOffset, createBudget, getBudgetById, updateBudget, deleteBudget, describePeriod, listBudgetsWithUsage, getForecast }
