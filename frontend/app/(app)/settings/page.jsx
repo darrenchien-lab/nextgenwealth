@@ -7,6 +7,7 @@ import { request, clearToken } from '@/lib/apiClient'
 import { getPreferredTheme, setTheme as persistTheme } from '@/lib/theme'
 import { getHideAmountsDefault, setHideAmountsDefault } from '@/lib/preferences'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import { PROFILE_EVENT } from '@/components/SidebarGreeting'
 import DayOfMonthPicker from '@/components/DayOfMonthPicker'
 import { ChangePasswordModal, DeleteAccountModal } from '@/components/account/AccountModals'
 
@@ -148,6 +149,10 @@ export default function SettingsPage() {
   const [passwordChanged, setPasswordChanged] = useState(false)
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [nameSaved, setNameSaved] = useState(false)
+  const [nameSaving, setNameSaving] = useState(false)
+  const [nameError, setNameError] = useState('')
 
   useEffect(() => {
     async function loadCurrency() {
@@ -174,7 +179,9 @@ export default function SettingsPage() {
     }
     async function loadMe() {
       try {
-        setMe((await request('/auth/me')).user)
+        const user = (await request('/auth/me')).user
+        setMe(user)
+        setNameInput(user.displayName || '')
       } catch {
         // The email line just stays empty.
       }
@@ -241,6 +248,24 @@ export default function SettingsPage() {
   function chooseHideDefault(next) {
     setHideDefault(next)
     setHideAmountsDefault(next)
+  }
+
+  async function saveName() {
+    setNameError('')
+    setNameSaved(false)
+    setNameSaving(true)
+    try {
+      const user = (await request('/auth/me', { method: 'PATCH', body: JSON.stringify({ displayName: nameInput }) })).user
+      setMe(user)
+      setNameInput(user.displayName || '')
+      setNameSaved(true)
+      // The sidebar greeting picks the new name up straight away.
+      window.dispatchEvent(new CustomEvent(PROFILE_EVENT, { detail: { displayName: user.displayName } }))
+    } catch (err) {
+      setNameError(err.message || 'Could not save the name')
+    } finally {
+      setNameSaving(false)
+    }
   }
 
   async function signOutEverywhere() {
@@ -357,6 +382,29 @@ export default function SettingsPage() {
       </Group>
 
       <Group title="Account">
+        <Row
+          icon={UserRound}
+          title="Your name"
+          description="What the app calls you in its greeting. Leave it empty to use the start of your email."
+          status={<Status saved={nameSaved} error={nameError} />}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              value={nameInput}
+              onChange={(e) => { setNameInput(e.target.value); setNameSaved(false) }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && nameInput.trim() !== (me?.displayName || '')) saveName() }}
+              maxLength={60}
+              placeholder="e.g. Darren"
+              className={`${CONTROL} min-w-0 flex-1`}
+              aria-label="Your name"
+            />
+            {me && nameInput.trim() !== (me.displayName || '') && (
+              <button onClick={saveName} disabled={nameSaving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-emerald-700 disabled:opacity-60">
+                {nameSaving && <Loader2 size={14} className="animate-spin" />} Save
+              </button>
+            )}
+          </div>
+        </Row>
         <Row icon={UserRound} title="Signed in as" description="The email you log in with.">
           <div className="flex items-center justify-end gap-2 text-sm">
             {me ? (

@@ -23,6 +23,10 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
   res.json({ success: true, user: await authService.getMe(req.userId) })
 }))
 
+router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
+  res.json({ success: true, user: await authService.updateProfile(req.userId, req.body || {}) })
+}))
+
 router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
   const { token, expiresAt } = await authService.changePassword(req.userId, req.body || {}, { tokenLifetimeSeconds: req.tokenLifetimeSeconds })
   res.json({ success: true, token, expiresAt })

@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getToken } from '@/lib/apiClient'
 import Sidebar from '@/components/Sidebar'
-import ThemeToggle from '@/components/ThemeToggle'
 
 export default function AppLayout({ children }) {
   const router = useRouter()
@@ -26,10 +25,7 @@ export default function AppLayout({ children }) {
   return (
     <div className="flex min-h-screen bg-gray-50 dark:bg-gray-950">
       <Sidebar />
-      <main className="relative flex-1 p-8">
-        <div className="fixed right-6 top-6 z-40">
-          <ThemeToggle />
-        </div>
+      <main className="relative min-w-0 flex-1 p-8">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
     </div>

@@ -4,9 +4,10 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Receipt,
-  Target, TrendingUp, FileBarChart, Sparkles, Settings, LogOut, LineChart
+  Target, TrendingUp, FileBarChart, Sparkles, Settings, LogOut
 } from 'lucide-react'
 import { request, clearToken } from '@/lib/apiClient'
+import SidebarGreeting from '@/components/SidebarGreeting'
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -36,16 +37,14 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-60 flex-shrink-0 bg-slate-900">
-      <div className="sticky top-0 flex h-screen flex-col justify-between overflow-y-auto">
-        <div>
-          <div className="flex items-center gap-2 px-5 py-6">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white">
-              <LineChart className="h-4 w-4" />
-            </div>
-            <span className="text-lg font-semibold text-white">NextGen Wealth</span>
-          </div>
-          <nav className="flex flex-col gap-1 px-3">
+    <aside className="w-60 flex-shrink-0 border-r border-white/5 bg-gray-900">
+      <div className="sticky top-0 flex h-screen flex-col overflow-y-auto">
+        <div className="flex flex-1 flex-col">
+          <SidebarGreeting />
+          {/* Takes the height left under the logo and spreads the items so the gaps
+              above the first, between every pair and below the last are all equal
+              (never tighter than 4px, so a short screen scrolls instead). */}
+          <nav className="flex flex-1 flex-col justify-evenly gap-1 px-3">
             {NAV_ITEMS.map((item) => {
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
               const Icon = item.icon
@@ -64,16 +63,14 @@ export default function Sidebar() {
                 </Link>
               )
             })}
+            <button
+              onClick={handleLogout}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <LogOut size={18} strokeWidth={2} />
+              Log out
+            </button>
           </nav>
-        </div>
-        <div className="border-t border-white/10 p-3">
-          <button
-            onClick={handleLogout}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-white"
-          >
-            <LogOut size={18} strokeWidth={2} />
-            Log out
-          </button>
         </div>
       </div>
     </aside>

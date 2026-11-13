@@ -162,3 +162,18 @@ test('account: deleting the account needs the password and removes the user and 
   assert.equal((await pool.query('SELECT 1 FROM accounts WHERE user_id = $1', [user.id])).rowCount, 0, 'their accounts went with them')
   assert.equal((await request(app).get('/auth/me').set(bearer(token))).status, 401, 'the old token no longer works')
 })
+
+test('account: the display name can be set, trimmed, cleared and is limited in length', async () => {
+  const { token } = await signedInUser()
+  assert.equal((await request(app).get('/auth/me').set(bearer(token))).body.user.displayName, null)
+
+  const set = await request(app).patch('/auth/me').set(bearer(token)).send({ displayName: '   Darren   Chien ' })
+  assert.equal(set.status, 200)
+  assert.equal(set.body.user.displayName, 'Darren Chien')
+  assert.equal((await request(app).get('/auth/me').set(bearer(token))).body.user.displayName, 'Darren Chien')
+
+  assert.equal((await request(app).patch('/auth/me').set(bearer(token)).send({ displayName: 'x'.repeat(61) })).status, 400)
+  assert.equal((await request(app).patch('/auth/me').set(bearer(token)).send({ displayName: 123 })).status, 400)
+  const cleared = await request(app).patch('/auth/me').set(bearer(token)).send({ displayName: '  ' })
+  assert.equal(cleared.body.user.displayName, null)
+})

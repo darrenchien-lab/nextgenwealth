@@ -8,7 +8,7 @@ import { getPreferredTheme, setTheme as persistTheme } from '@/lib/theme'
 // the caller) rather than a labeled row in the Sidebar — it needs to stay
 // visible no matter which page/menu item is currently open, not live
 // inside the sidebar's own column.
-export default function ThemeToggle() {
+export default function ThemeToggle({ variant = 'floating' }) {
   const [theme, setThemeState] = useState(null)
 
   useEffect(() => {
@@ -31,7 +31,9 @@ export default function ThemeToggle() {
       onClick={toggle}
       title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
       aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-gray-500 shadow-sm ring-1 ring-gray-200 transition-all duration-150 hover:scale-110 hover:text-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700 dark:hover:text-gray-200"
+      className={variant === 'sidebar'
+        ? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors duration-150 hover:bg-white/10 hover:text-white'
+        : 'flex h-9 w-9 items-center justify-center rounded-full bg-white text-gray-500 shadow-sm ring-1 ring-gray-200 transition-all duration-150 hover:scale-110 hover:text-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700 dark:hover:text-gray-200'}
     >
       {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
     </button>

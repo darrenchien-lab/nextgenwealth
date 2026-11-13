@@ -36,6 +36,7 @@ const SQL = {
   getUserByEmailForResend: loadSql('auth/getUserByEmailForResend'),
   pruneExpiredEmailVerificationTokens: loadSql('auth/pruneExpiredEmailVerificationTokens'),
   getUserById: loadSql('auth/getUserById'),
+  updateDisplayName: loadSql('auth/updateDisplayName'),
   getPasswordHashById: loadSql('auth/getPasswordHashById'),
   setSessionCutoff: loadSql('auth/setSessionCutoff'),
   deleteUser: loadSql('auth/deleteUser')
@@ -139,7 +140,17 @@ const login = async ({ email, password, rememberMe }, { ip } = {}) => {
 const getMe = async (userId) => {
   const user = (await query(SQL.getUserById, [userId])).rows[0]
   if (!user) throw unauthorized('This account no longer exists')
-  return { id: user.id, email: user.email, createdAt: user.created_at, emailVerified: Boolean(user.email_verified_at) }
+  return { id: user.id, email: user.email, displayName: user.display_name, createdAt: user.created_at, emailVerified: Boolean(user.email_verified_at) }
+}
+
+// The name the app greets the user by; an empty one clears it.
+const updateProfile = async (userId, { displayName } = {}) => {
+  if (displayName !== undefined && displayName !== null && typeof displayName !== 'string') throw badRequest('displayName must be text')
+  const name = typeof displayName === 'string' ? displayName.trim().replace(/\s+/g, ' ') : ''
+  if (name.length > 60) throw badRequest('The name can be at most 60 characters')
+  const row = (await query(SQL.updateDisplayName, [name || null, userId])).rows[0]
+  if (!row) throw unauthorized('This account no longer exists')
+  return { id: row.id, email: row.email, displayName: row.display_name, createdAt: row.created_at, emailVerified: Boolean(row.email_verified_at) }
 }
 
 // Checks the signed-in user's own password before a sensitive change. A wrong
@@ -266,6 +277,7 @@ module.exports = {
   login,
   logout,
   getMe,
+  updateProfile,
   changePassword,
   logoutEverywhere,
   deleteAccount,
