@@ -12,6 +12,9 @@ import CycleCompareCard from '@/components/CycleCompareCard'
 import CurrencyExposureCard from '@/components/CurrencyExposureCard'
 import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
 import PageSkeleton from '@/components/PageSkeleton'
+import SavingsRateTrendCard from '@/components/SavingsRateTrendCard'
+import TopCategoriesCard from '@/components/TopCategoriesCard'
+import SpendingHeatmapCard from '@/components/SpendingHeatmapCard'
 
 
 
@@ -187,6 +190,12 @@ export default function ReportsPage() {
 
       {exportError && <p className="text-sm text-red-600 dark:text-red-400">{exportError}</p>}
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <SavingsRateTrendCard />
+        <TopCategoriesCard />
+        <SpendingHeatmapCard />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <CycleCompareCard />

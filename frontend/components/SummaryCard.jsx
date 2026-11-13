@@ -17,7 +17,7 @@ const COLOR_STYLES = {
 // the label keeps the visual cue without taking space from the number.
 // A tiny line for a card: just the shape of the values, green when it ends at
 // or above where it started and red when below. No axes or numbers.
-function Sparkline({ values, large = false }) {
+function Sparkline({ values, large = false, goodWhenUp = true }) {
   const width = large ? 200 : 84
   const height = large ? 40 : 32
   const pad = 3
@@ -30,7 +30,7 @@ function Sparkline({ values, large = false }) {
   ])
   const line = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
   const up = values[values.length - 1] >= values[0]
-  const color = up ? '#10b981' : '#ef4444'
+  const color = up === goodWhenUp ? '#10b981' : '#ef4444'
   const [lastX, lastY] = points[points.length - 1]
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="shrink-0" aria-hidden="true">
@@ -82,7 +82,7 @@ function Parts({ parts, hidden }) {
 
 export default function SummaryCard({
   label, value, hint, icon: Icon, color = 'slate', change, changeUnit = '%', children, spark,
-  maskable = false, hidden = false, onToggleHidden, className = '', hero = false, parts
+  maskable = false, hidden = false, onToggleHidden, className = '', hero = false, parts, sparkGoodWhenUp = true
 }) {
   const sparkValues = spark && spark.length > 1 ? spark : null
   return (
@@ -122,7 +122,7 @@ export default function SummaryCard({
           <p title={value} className={`mt-1.5 truncate font-semibold text-gray-900 dark:text-gray-100 ${hero ? 'text-2xl tracking-tight' : 'text-lg'}`}>{typeof value === 'string' ? <AnimatedValue text={value} /> : value}</p>
         ))}
         </div>
-        {sparkValues && <div className="mb-0.5 hidden sm:block"><Sparkline values={sparkValues} large={hero} /></div>}
+        {sparkValues && <div className="mb-0.5 hidden sm:block"><Sparkline values={sparkValues} large={hero} goodWhenUp={sparkGoodWhenUp} /></div>}
       </div>
       {/* A percentage change gives no amount away, so it stays visible when
           the amount itself is masked. */}

@@ -22,6 +22,8 @@ import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE, INCOME_COLOR, EXPENSE_COLO
 import PageSkeleton from '@/components/PageSkeleton'
 
 
+// One value per budget cycle (oldest first) for a card's little trend line.
+const cycleSeries = (trends, pick) => (trends && trends.length > 1 ? trends.map(pick) : undefined)
 const ACCOUNT_TYPE_LABELS = { bank: 'Bank', e_wallet: 'E-Wallet', cash: 'Cash', credit_card: 'Credit Card', investments: 'Investments' }
 
 export default function DashboardPage() {
@@ -242,9 +244,9 @@ export default function DashboardPage() {
           hidden={hideAmounts}
           onToggleHidden={() => setHideAmounts((v) => !v)}
         />
-        <SummaryCard icon={TrendingUp} color="emerald" label="Income" value={formatCurrency(summary.income, currency)} hint={periodLabel} />
-        <SummaryCard icon={TrendingDown} color="red" label="Expense" value={formatCurrency(summary.expense, currency)} hint={periodLabel} />
-        <SummaryCard className="col-span-2 lg:col-span-1" icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} />
+        <SummaryCard icon={TrendingUp} color="emerald" label="Income" value={formatCurrency(summary.income, currency)} hint={periodLabel} spark={cycleSeries(trends, (t) => t.income)} />
+        <SummaryCard icon={TrendingDown} color="red" label="Expense" value={formatCurrency(summary.expense, currency)} hint={periodLabel} spark={cycleSeries(trends, (t) => t.expense)} sparkGoodWhenUp={false} />
+        <SummaryCard className="col-span-2 lg:col-span-1" icon={PiggyBank} color="amber" label="Savings Rate" value={formatPercent(summary.savingsRate)} hint={periodLabel} spark={cycleSeries(trends, (t) => (t.income > 0 ? (t.net / t.income) * 100 : 0))} />
         <div className="order-last col-span-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700 flex flex-col lg:order-none lg:col-span-1 lg:col-start-4 lg:row-span-2 lg:row-start-1">
           <CardHeader
             icon={PieIcon}
