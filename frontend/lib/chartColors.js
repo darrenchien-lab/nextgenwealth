@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 
-// Categorical palette for pie/donut charts — eight hues in a fixed order,
-// checked for color-blind separation between neighbors and stepped
-// separately for each theme's card surface (white / gray-800).
+// Categorical palette for pie/donut charts — eight hues in a fixed order.
+// Deliberately calm rather than vivid: similar lightness and moderate colour
+// strength, no pure primaries, with a blue-grey as the eighth, so a ring of
+// them reads as one family. Stepped separately for each theme's card surface
+// (white / gray-800), and checked for separation between every pair (OKLab
+// distance 7.9+ in both themes) and for colour-blind viewers (5+ under
+// deuteranopia). The "Other" slice stays a plain grey, apart from these.
 const CATEGORY_COLORS = {
-  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
-  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+  light: ['#3e6fd1', '#1b8a6b', '#c98a1f', '#7f70dd', '#e07a99', '#2e9bb0', '#b8582f', '#6a7d94'],
+  dark: ['#5b8def', '#2a9d7c', '#e0a246', '#9a8cf0', '#f08fab', '#45b0c4', '#d98552', '#8993a3']
 }
 const OTHER_COLOR = { light: '#9ca3af', dark: '#6b7280' }
 
