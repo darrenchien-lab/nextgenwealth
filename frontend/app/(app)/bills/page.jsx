@@ -8,6 +8,7 @@ import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
 import { Plus, Receipt, CheckCircle, Pencil, XCircle, X, AlertTriangle } from 'lucide-react'
+import PageSkeleton from '@/components/PageSkeleton'
 
 const emptyForm = () => ({ name: '', amount: '', dueDate: '', accountId: '', categoryId: '', notes: '' })
 
@@ -279,7 +280,7 @@ export default function BillsPage() {
         {loadError && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{loadError}</p>}
 
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading bills...</p>
+          <PageSkeleton />
         ) : bills.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <Receipt size={28} className="text-gray-300 dark:text-gray-600" />

@@ -3,10 +3,11 @@
 import { useId } from 'react'
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts'
 import { timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
+import { AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
 
 const UP = '#10b981'
 const DOWN = '#ef4444'
-const TICK = { fontSize: 12, fill: 'var(--chart-axis, #9ca3af)' }
+const TICK = AXIS_TICK
 
 // A single value over time, styled after stock apps: a clean line with no
 // point markers over a fading area, green when the range ends at or above
@@ -90,7 +91,7 @@ export default function TrendAreaChart({ data, dataKey, name, description, hint,
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--chart-grid)" />
+        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
         <XAxis
           dataKey="ts"
           type="number"

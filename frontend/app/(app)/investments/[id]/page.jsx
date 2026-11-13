@@ -9,6 +9,7 @@ import { formatCurrency, formatQuantity } from '@/lib/format'
 import PriceHistoryChart from '@/components/PriceHistoryChart'
 import SellHoldingModal from '@/components/SellHoldingModal'
 import CardHeader from '@/components/CardHeader'
+import PageSkeleton from '@/components/PageSkeleton'
 
 const ASSET_TYPE_LABELS = { stock: 'Stock', mutual_fund: 'Mutual Fund', crypto: 'Crypto', etf: 'ETF', bond: 'Bond', gold: 'Gold', property: 'Property', other: 'Other' }
 
@@ -138,7 +139,7 @@ export default function HoldingDetailPage() {
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      {loading && <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>}
+      {loading && <PageSkeleton />}
 
       {holding && (
         <>

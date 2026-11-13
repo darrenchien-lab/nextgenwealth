@@ -8,6 +8,7 @@ import { formatCurrency, formatCompact } from '@/lib/format'
 import CardHeader from '@/components/CardHeader'
 import ScrollFadeBox from '@/components/ScrollFadeBox'
 import BudgetRows from '@/components/BudgetRows'
+import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
 
 const THIS_CYCLE = '#2563eb'
 const GUIDE = 'var(--chart-axis, #9ca3af)'
@@ -151,11 +152,11 @@ export default function SpendingPaceCard({ current, previous, budgeted, budgets,
                       <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                  <XAxis dataKey="date" fontSize={11} tickLine={false} axisLine={false} ticks={ticks} interval={0} tickFormatter={(d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`} />
-                  <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={48} domain={[0, 'auto']} />
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                  <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} ticks={ticks} interval={0} tickFormatter={(d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`} />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={48} domain={[0, 'auto']} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 8, color: 'var(--tooltip-text)', fontSize: 12 }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
                     labelFormatter={(d, payload) => `Day ${payload?.[0]?.payload?.day ?? ''} · ${new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}`}
                     formatter={(value, name) => [formatCurrency(value, currency), name]}
                   />

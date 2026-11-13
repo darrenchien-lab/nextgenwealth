@@ -6,6 +6,7 @@ import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import { todayInputValue } from '@/lib/dates'
 import CardHeader from '@/components/CardHeader'
+import PageSkeleton from '@/components/PageSkeleton'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
 import {
@@ -409,7 +410,7 @@ export default function AccountsPage() {
           }
         />
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading accounts...</p>
+          <PageSkeleton />
         ) : visibleAccounts.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <Wallet size={28} className="text-gray-300 dark:text-gray-600" />

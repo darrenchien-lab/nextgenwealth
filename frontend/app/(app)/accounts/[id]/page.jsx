@@ -8,6 +8,7 @@ import { request } from '@/lib/apiClient'
 import { formatCurrency, formatQuantity } from '@/lib/format'
 import CardHeader from '@/components/CardHeader'
 import SummaryCard from '@/components/SummaryCard'
+import PageSkeleton from '@/components/PageSkeleton'
 
 const ACCOUNT_TYPE_LABELS = { bank: 'Bank', e_wallet: 'E-Wallet', cash: 'Cash', credit_card: 'Credit Card' }
 
@@ -207,7 +208,7 @@ export default function AccountStatementPage() {
       <div className="rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
         <CardHeader icon={ScrollText} color="violet" title="Movements" subtitle={statement ? `${statement.entries.length} in this period` : null} />
         {loading && !statement ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading statement...</p>
+          <PageSkeleton />
         ) : !statement ? null : statement.entries.length === 0 ? (
           <p className="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
             No movements {filterMode === 'range' ? `between ${periodLabel}` : `in ${periodLabel}`}.{' '}

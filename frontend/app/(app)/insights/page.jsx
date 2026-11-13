@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { request } from '@/lib/apiClient'
+import PageSkeleton from '@/components/PageSkeleton'
 
 export default function InsightsPage() {
   const [insights, setInsights] = useState(null)
@@ -72,7 +73,7 @@ export default function InsightsPage() {
         <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">AI Insights</h2>
         {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading insights...</p>
+          <PageSkeleton />
         ) : (
           <ul className="space-y-2">
             {insights.insights.map((text, i) => (

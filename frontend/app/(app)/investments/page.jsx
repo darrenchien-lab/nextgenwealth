@@ -14,16 +14,9 @@ import BuyHoldingModal from '@/components/BuyHoldingModal'
 import MarketSearch from '@/components/MarketSearch'
 import AutoPriceReview from '@/components/AutoPriceReview'
 import PortfolioSummary from '@/components/PortfolioSummary'
+import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
+import PageSkeleton from '@/components/PageSkeleton'
 
-// Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
-// classes — these CSS variables (defined in globals.css) are the dark-mode
-// bridge for it, same as the Dashboard/Reports charts.
-const CHART_TOOLTIP_STYLE = {
-  backgroundColor: 'var(--tooltip-bg)',
-  border: '1px solid var(--tooltip-border)',
-  borderRadius: 8,
-  color: 'var(--tooltip-text)'
-}
 
 // Hues far enough apart to tell lines apart at a glance (no teal next to
 // green, no amber next to orange).
@@ -760,7 +753,7 @@ export default function InvestmentsPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Loading portfolio...</p>
+        <PageSkeleton />
       ) : (
         <>
           <PortfolioSummary portfolio={portfolio} />
@@ -924,9 +917,9 @@ export default function InvestmentsPage() {
                 </div>
                 <ResponsiveContainer width="100%" height={280}>
                   <LineChart data={filteredHoldingsHistory} margin={{ top: 10, right: 16 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                    <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} ticks={timeAxisTicks(filteredHoldingsHistory)} tickFormatter={timeAxisFormatter(filteredHoldingsHistory)} fontSize={12} />
-                    <YAxis fontSize={12} tickFormatter={formatNumber} width={130} />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                    <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} ticks={timeAxisTicks(filteredHoldingsHistory)} tickFormatter={timeAxisFormatter(filteredHoldingsHistory)} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                    <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatNumber} width={130} />
                     <Tooltip
                       contentStyle={CHART_TOOLTIP_STYLE}
                       labelFormatter={timeTooltipFormatter(filteredHoldingsHistory)}

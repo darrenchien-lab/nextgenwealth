@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { TrendingUp, TrendingDown, PiggyBank, Landmark, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
@@ -12,22 +12,16 @@ import ScrollFadeList from '@/components/ScrollFadeList'
 import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SpendingPaceCard from '@/components/SpendingPaceCard'
+import DonutChart from '@/components/DonutChart'
 import RecentTransactionsCard from '@/components/RecentTransactionsCard'
 import QuickAddTransactionModal from '@/components/QuickAddTransactionModal'
 import { todayInputValue } from '@/lib/dates'
 import { getHideAmountsDefault } from '@/lib/preferences'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
+import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE, INCOME_COLOR, EXPENSE_COLOR } from '@/lib/chartStyle'
+import PageSkeleton from '@/components/PageSkeleton'
 
 
-// Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
-// classes — these CSS variables (defined in globals.css) are the dark-mode
-// bridge for it, same idea as the chart grid/track colors elsewhere.
-const CHART_TOOLTIP_STYLE = {
-  backgroundColor: 'var(--tooltip-bg)',
-  border: '1px solid var(--tooltip-border)',
-  borderRadius: 8,
-  color: 'var(--tooltip-text)'
-}
 const ACCOUNT_TYPE_LABELS = { bank: 'Bank', e_wallet: 'E-Wallet', cash: 'Cash', credit_card: 'Credit Card', investments: 'Investments' }
 
 export default function DashboardPage() {
@@ -43,6 +37,9 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([])
   const [recent, setRecent] = useState(null)
   const [recentPeriod, setRecentPeriod] = useState(null)
+  // The slice (by row index) pointed at, in a donut or in the list beside it.
+  const [allocationActive, setAllocationActive] = useState(null)
+  const [expenseActive, setExpenseActive] = useState(null)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [breakdown, setBreakdown] = useState(null)
@@ -152,7 +149,7 @@ export default function DashboardPage() {
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-500 dark:text-gray-400">Loading dashboard...</p>
+  if (loading) return <PageSkeleton />
 
   if (error) {
     return (
@@ -259,30 +256,11 @@ export default function DashboardPage() {
           />
           {allocation && allocation.allocation.length > 0 ? (
             <div className="flex flex-col items-center gap-3 lg:flex-1 lg:justify-center xl:flex-row xl:gap-5">
-              <div className="h-24 w-24 shrink-0 xl:h-32 xl:w-32">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={allocationSlices}
-                      dataKey="amount"
-                      nameKey="type"
-                      innerRadius="57%"
-                      outerRadius="93%"
-                      paddingAngle={2}
-                      cornerRadius={3}
-                    >
-                      {allocationSlices.map((entry) => (
-                        <Cell key={entry.type} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, allocation.displayCurrency)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+              <DonutChart data={allocationSlices} nameKey="type" unit="types" activeIndex={allocationActive} onActiveChange={setAllocationActive} className="h-24 w-24 xl:h-32 xl:w-32" />
               <div className="w-full min-w-0 xl:flex-1">
                 <ScrollFadeList className="h-24 w-full min-w-0 space-y-0.5 pr-1 xl:h-auto xl:max-h-44">
-                  {allocationSlices.map((entry) => (
-                    <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs xl:text-[13px]">
+                  {allocationSlices.map((entry, i) => (
+                    <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} onMouseEnter={() => setAllocationActive(i)} onMouseLeave={() => setAllocationActive(null)} className={`flex items-center justify-between gap-2 rounded px-1 py-0.5 text-xs transition-colors duration-100 xl:text-[13px] ${allocationActive === i ? 'bg-gray-100 dark:bg-gray-700/60' : ''}`}>
                       <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
                         <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
@@ -315,13 +293,13 @@ export default function DashboardPage() {
             <div className="min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trends}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="month" fontSize={12} />
-                <YAxis fontSize={12} tickFormatter={formatCompact} width={56} />
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                <XAxis dataKey="month" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={56} />
                 <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, currency)} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="income" fill="#10b981" name="Income" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expense" fill="#ef4444" name="Expense" radius={[4, 4, 0, 0]} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="income" fill={INCOME_COLOR} name="Income" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="expense" fill={EXPENSE_COLOR} name="Expense" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
             </div>
@@ -339,21 +317,10 @@ export default function DashboardPage() {
           />
           {expenseSlices.length > 0 ? (
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-6">
-              <div className="h-28 w-28 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={expenseSlices} dataKey="amount" nameKey="categoryName" innerRadius={32} outerRadius={52} paddingAngle={2} cornerRadius={3}>
-                      {expenseSlices.map((entry) => (
-                        <Cell key={entry.categoryName} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatCurrency(value, breakdown.displayCurrency)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+              <DonutChart data={expenseSlices} nameKey="categoryName" unit="categories" activeIndex={expenseActive} onActiveChange={setExpenseActive} className="h-28 w-28" />
               <ScrollFadeList className="h-28 w-full min-w-0 space-y-0.5 pr-1">
-                {expenseSlices.map((entry) => (
-                  <li key={entry.categoryName} title={formatCurrency(entry.amount, breakdown.displayCurrency)} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                {expenseSlices.map((entry, i) => (
+                  <li key={entry.categoryName} title={formatCurrency(entry.amount, breakdown.displayCurrency)} onMouseEnter={() => setExpenseActive(i)} onMouseLeave={() => setExpenseActive(null)} className={`flex items-center justify-between gap-2 rounded px-1 py-0.5 text-xs transition-colors duration-100 ${expenseActive === i ? 'bg-gray-100 dark:bg-gray-700/60' : ''}`}>
                     <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
                       <span className="truncate">{entry.categoryName}</span>

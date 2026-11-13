@@ -5,6 +5,7 @@ import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import PageSkeleton from '@/components/PageSkeleton'
 
 // 'YYYY-MM' cycle key shifted by whole months (cycles are one month long).
 function shiftPeriod(period, months) {
@@ -259,7 +260,7 @@ export default function BudgetsPage() {
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
       {actionError && <p className="text-sm text-red-600 dark:text-red-400">{actionError}</p>}
       {loading ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Loading budgets...</p>
+        <PageSkeleton />
       ) : budgets.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-gray-500">No budgets for this period yet.</p>
       ) : (

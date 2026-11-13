@@ -4,11 +4,12 @@ import { useMemo, useState } from 'react'
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts'
 import { CHART_RANGES, historyInRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
+import { AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
 
 const PRICE = '#3b82f6'
 const BUY = '#10b981'
 const SELL = '#ef4444'
-const TICK = { fontSize: 12, fill: 'var(--chart-axis, #9ca3af)' }
+const TICK = AXIS_TICK
 
 const localDay = (value) => {
   const d = new Date(value)
@@ -136,7 +137,7 @@ export default function PriceHistoryChart({ points, currency, averagePrice, trad
       {rows.length > 1 ? (
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={rows} margin={{ top: 10, right: 4, bottom: 0, left: 4 }}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
             <XAxis
               dataKey="ts"
               type="number"

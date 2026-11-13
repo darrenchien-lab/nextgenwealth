@@ -10,17 +10,10 @@ import TrendAreaChart from '@/components/TrendAreaChart'
 import TargetAllocationCard from '@/components/TargetAllocationCard'
 import CycleCompareCard from '@/components/CycleCompareCard'
 import CurrencyExposureCard from '@/components/CurrencyExposureCard'
+import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
+import PageSkeleton from '@/components/PageSkeleton'
 
 
-// Recharts' Tooltip takes literal colors via contentStyle, not Tailwind
-// classes — these CSS variables (defined in globals.css) are the dark-mode
-// bridge for it, same idea as the chart grid color used below.
-const CHART_TOOLTIP_STYLE = {
-  backgroundColor: 'var(--tooltip-bg)',
-  border: '1px solid var(--tooltip-border)',
-  borderRadius: 8,
-  color: 'var(--tooltip-text)'
-}
 
 // Falls back to the earliest snapshot when the target date predates all
 // history, so "this year"/"this month" still shows a change even for an
@@ -169,7 +162,7 @@ export default function ReportsPage() {
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-500 dark:text-gray-400">Loading reports...</p>
+  if (loading) return <PageSkeleton />
 
   return (
     <div className="space-y-6">
@@ -254,9 +247,9 @@ export default function ReportsPage() {
                 <ResponsiveContainer width="100%" height={280}>
                   {chartType === 'bar' ? (
                     <BarChart data={filteredNetWorthHistory} margin={{ top: 10, right: 16 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                      <XAxis dataKey="date" fontSize={12} tickFormatter={formatAxisDate} />
-                      <YAxis fontSize={12} domain={['auto', 'auto']} tickFormatter={formatNumber} width={130} />
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                      <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatAxisDate} />
+                      <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} domain={['auto', 'auto']} tickFormatter={formatNumber} width={130} />
                       <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value, name, props) => formatCurrency(value, props.payload.displayCurrency)} />
                       <Bar dataKey="netWorth" name="Net Worth" fill="#2563eb" radius={[4, 4, 0, 0]} />
                       <Brush dataKey="date" height={26} stroke="var(--chart-grid)" fill="var(--tooltip-bg)" tickFormatter={formatAxisDate} travellerWidth={10} />

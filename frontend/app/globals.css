@@ -5,16 +5,16 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f8fa;
+  --foreground: #101828;
   /* Recharts/SVG elements take literal color strings, not Tailwind classes —
      these variables are the dark-mode bridge for those (grid lines, tooltip
      box, health-gauge track), read via stroke="var(--chart-grid)" etc. */
-  --chart-grid: #e5e7eb;
-  --chart-track: #e5e7eb;
+  --chart-grid: #e2e5eb;
+  --chart-track: #e2e5eb;
   --tooltip-bg: #ffffff;
-  --tooltip-border: #e5e7eb;
-  --tooltip-text: #111827;
+  --tooltip-border: #e2e5eb;
+  --tooltip-text: #101828;
   /* Axis labels, baselines and secondary lines on charts. */
   --chart-axis: #9ca3af;
 }
@@ -26,21 +26,60 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* The app's greys, tuned in one place. The defaults lean warm and flat; these
+   lean slightly cool (a hint of blue) and are stepped so that, in dark mode,
+   a card (gray-800) reads clearly against the page (gray-950) and its hairline
+   border (gray-700) is quiet but visible, and in light mode the page (gray-50)
+   is a soft off-white so white cards lift off it. Changing a value here
+   changes it everywhere the class is used. */
+@theme {
+  --color-gray-50: #f7f8fa;
+  --color-gray-100: #eef0f4;
+  --color-gray-200: #e2e5eb;
+  --color-gray-300: #cfd4dd;
+  --color-gray-400: #98a2b3;
+  --color-gray-500: #667085;
+  --color-gray-600: #475467;
+  --color-gray-700: #2a3342;
+  --color-gray-800: #171d28;
+  --color-gray-900: #0f141d;
+  --color-gray-950: #090c12;
+
+  /* Softer, layered shadows: a hairline plus a faint spread, instead of one
+     hard drop. */
+  --shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
+  --shadow-sm: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.06);
+  --shadow-md: 0 2px 4px -2px rgb(16 24 40 / 0.06), 0 4px 8px -2px rgb(16 24 40 / 0.08);
+  --shadow-lg: 0 4px 6px -2px rgb(16 24 40 / 0.05), 0 12px 16px -4px rgb(16 24 40 / 0.10);
+  --shadow-xl: 0 8px 8px -4px rgb(16 24 40 / 0.04), 0 20px 24px -4px rgb(16 24 40 / 0.12);
+}
+
 .dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --chart-grid: #374151;
-  --chart-track: #374151;
-  --tooltip-bg: #1f2937;
-  --tooltip-border: #374151;
-  --tooltip-text: #f3f4f6;
-  --chart-axis: #6b7280;
+  --background: #090c12;
+  --foreground: #eef0f4;
+  --chart-grid: #2a3342;
+  --chart-track: #2a3342;
+  --tooltip-bg: #171d28;
+  --tooltip-border: #2a3342;
+  --tooltip-text: #eef0f4;
+  --chart-axis: #667085;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* The font the layout loads (Geist). This used to be forced to Arial, which
+     is why the whole app looked like a plain document. */
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Digits all the same width, so amounts line up in columns and don't
+     jitter as numbers change. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 {
+  letter-spacing: -0.015em;
 }
 
 /* Tells the browser to render native form-control chrome (a <select>'s
@@ -62,4 +101,51 @@ body {
 }
 .animate-shake {
   animation: shake 0.35s ease-in-out;
+}
+
+/* ---- Shared look for tables, forms and dialogs, so every page matches. ---- */
+
+table thead th {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+/* One focus style for text fields, selects and text areas. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.18);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Dialogs: backdrop fades in, the box rises into place. */
+  div.fixed.inset-0.z-50 {
+    animation: fade-in 0.15s ease-out;
+    backdrop-filter: blur(2px);
+  }
+  div.fixed.inset-0.z-50 > div {
+    animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Each page eases in when you navigate to it. */
+  .page-enter {
+    animation: page-in 0.25s ease-out;
+  }
 }

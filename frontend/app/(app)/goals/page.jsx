@@ -7,6 +7,7 @@ import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import { todayInputValue } from '@/lib/dates'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import PageSkeleton from '@/components/PageSkeleton'
 
 const INPUT = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100'
 
@@ -246,7 +247,7 @@ export default function GoalsPage() {
       {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
 
       {loading ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Loading goals...</p>
+        <PageSkeleton />
       ) : goals.length === 0 ? (
         <div className="rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700">
           <Target size={32} className="mx-auto text-emerald-500" />

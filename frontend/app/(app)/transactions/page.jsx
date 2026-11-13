@@ -8,6 +8,7 @@ import CardHeader from '@/components/CardHeader'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SummaryCard from '@/components/SummaryCard'
 import { Plus, SlidersHorizontal, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Pencil, Trash2, Receipt, X, TrendingUp, TrendingDown, Scale, Tag, Split, AlertTriangle, ChevronLeft, ChevronRight, CalendarRange, CalendarDays, RefreshCcw } from 'lucide-react'
+import PageSkeleton from '@/components/PageSkeleton'
 
 const TYPES = ['income', 'expense']
 
@@ -684,7 +685,7 @@ export default function TransactionsPage() {
       {quickEditError && <p className="text-sm text-red-600 dark:text-red-400">{quickEditError}</p>}
 
       {loading ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Loading transactions...</p>
+        <PageSkeleton />
       ) : transactions.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-2xl bg-white dark:bg-gray-800 py-12 text-center shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
           <Receipt size={28} className="text-gray-300 dark:text-gray-500" />
