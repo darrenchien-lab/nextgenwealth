@@ -4,6 +4,7 @@ const { loadSql } = require('../db/loadSql')
 const { badRequest, conflict, assertOwned } = require('../shared/utils')
 const { validateFrequency, computeNextDueDate } = require('../shared/recurrence')
 const accountsService = require('./accounts')
+const categoriesService = require('./categories')
 const currencyService = require('./currency')
 const { resolveEntryTime } = require('../shared/entryDate')
 const { shiftNetWorthHistory } = require('./netWorthHistory')
@@ -30,11 +31,18 @@ const SQL = {
   delete: loadSql('bills/delete')
 }
 
+// A bill may only point at the person's own account and category.
+const assertOwnLinks = async (userId, accountId, categoryId) => {
+  if (accountId) await accountsService.getAccountById(userId, accountId)
+  if (categoryId) await categoriesService.requireCategory(userId, categoryId)
+}
+
 const createBill = async (userId, { name, amount, dueDate, recurrence, accountId, categoryId, notes }) => {
   if (typeof name !== 'string' || name.trim() === '') throw badRequest('Bill name is required')
   const numericAmount = Number(amount)
   if (!(numericAmount > 0)) throw badRequest('amount must be a positive number')
   if (!dueDate) throw badRequest('dueDate is required')
+  await assertOwnLinks(userId, accountId, categoryId)
 
   let recurrenceRuleId = null
   if (recurrence) {
@@ -67,6 +75,7 @@ const updateBill = async (userId, id, { name, amount, dueDate, accountId, catego
   const updatedAccountId = accountId !== undefined ? (accountId || null) : bill.account_id
   const updatedCategoryId = categoryId !== undefined ? (categoryId || null) : bill.category_id
   const updatedNotes = notes !== undefined ? (notes?.trim() || null) : bill.notes
+  await assertOwnLinks(userId, accountId !== undefined ? updatedAccountId : null, categoryId !== undefined ? updatedCategoryId : null)
 
   const result = await query(SQL.update,
     [updatedName.trim(), updatedAmount, updatedDueDate, updatedAccountId, updatedCategoryId, updatedNotes, bill.id]

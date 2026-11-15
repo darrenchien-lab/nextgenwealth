@@ -45,10 +45,34 @@ const requireAuth = async (req, res, next) => {
   }
 }
 
+// PostgreSQL errors that mean "the value sent can't be stored", by error code.
+// Validation catches the usual cases first; these are the safety net for the rest.
+const DATABASE_INPUT_ERRORS = {
+  22003: { status: 400, code: 'VALIDATION_ERROR', message: 'A number in that request is too large.' },
+  22001: { status: 400, code: 'VALIDATION_ERROR', message: 'A value in that request is too long.' },
+  '22P02': { status: 400, code: 'VALIDATION_ERROR', message: 'A value in that request is not valid.' },
+  22007: { status: 400, code: 'VALIDATION_ERROR', message: 'A date in that request is not valid.' },
+  22008: { status: 400, code: 'VALIDATION_ERROR', message: 'A date in that request is not valid.' },
+  23503: { status: 400, code: 'VALIDATION_ERROR', message: 'That refers to something that does not exist.' },
+  23514: { status: 400, code: 'VALIDATION_ERROR', message: 'A value in that request is out of range.' },
+  23505: { status: 409, code: 'CONFLICT', message: 'That already exists.' }
+}
+
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (err, req, res, next) => {
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({ success: false, code: err.code, message: err.message })
+  }
+  // Bad input from the person's side is never a server crash.
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, code: 'PAYLOAD_TOO_LARGE', message: 'That request is too large.' })
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, code: 'VALIDATION_ERROR', message: 'The request could not be read.' })
+  }
+  const fromDatabase = DATABASE_INPUT_ERRORS[err.code]
+  if (fromDatabase) {
+    return res.status(fromDatabase.status).json({ success: false, code: fromDatabase.code, message: fromDatabase.message })
   }
   console.error(err)
   res.status(500).json({ success: false, code: 'INTERNAL_ERROR', message: 'Internal server error' })

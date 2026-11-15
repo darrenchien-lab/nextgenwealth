@@ -198,6 +198,7 @@ const splitTransaction = async (userId, id, splits) => {
 
   let total = 0
   for (const s of splits) {
+    if (!s || typeof s !== 'object') throw badRequest('Each split needs an amount')
     const amount = Number(s.amount)
     if (!(amount > 0)) throw badRequest('Each split amount must be a positive number')
     total += amount
