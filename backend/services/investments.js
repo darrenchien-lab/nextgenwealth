@@ -989,6 +989,7 @@ const tradeCostSeries = async (userId, displayCurrency, holdingId = null) => {
   for (const holding of holdings) {
     let quantity = 0
     let cost = 0
+    let fees = 0
     const steps = []
     for (const t of trades) {
       if (t.holding_id !== holding.id) continue
@@ -996,11 +997,13 @@ const tradeCostSeries = async (userId, displayCurrency, holdingId = null) => {
       if (t.type === 'buy') {
         quantity += q
         cost += Number(t.total_amount)
+        fees += Number(t.fee || 0)
       } else if (quantity > 0) {
         cost -= (cost / quantity) * q
+        fees -= (fees / quantity) * q
         quantity -= q
       }
-      steps.push({ date: t.trade_date, cost })
+      steps.push({ date: t.trade_date, cost, fees })
     }
     // A closed holding with no trades never had a known cost to chart.
     if (steps.length === 0 && holding.is_closed) continue
@@ -1015,28 +1018,34 @@ const tradeCostSeries = async (userId, displayCurrency, holdingId = null) => {
     if (currency === displayCurrency) return 1
     const key = `${currency}:${date}`
     if (!rates.has(key)) {
-      const then = await currencyService.convertAmountAsOf(1_000_000, currency, displayCurrency, date)
-      const converted = then.available ? then : await currencyService.convertAmount(1_000_000, currency, displayCurrency)
-      rates.set(key, converted.available ? converted.amount / 1_000_000 : null)
+      // The exact rate, not one worked out from a rounded amount: for a currency
+      // with small units (rupiah) that rounding would show up in the total.
+      rates.set(key, (await currencyService.getRateAsOf(currency, displayCurrency, date)) ?? (await currencyService.getRate(currency, displayCurrency)))
     }
     return rates.get(key)
   }
 
+  // The cost on a date as { cost, fees }: what was paid, and the part of it
+  // that was fees, both in the display currency at that day's rate.
   return async (date) => {
     let total = 0
+    let totalFees = 0
     for (const { currency, steps } of series) {
       let cost = 0
+      let fees = 0
       for (const step of steps) {
         if (step.date > date) break
         cost = step.cost
+        fees = step.fees
       }
       if (cost === 0) continue
       const rate = await rateOn(currency, date)
       if (rate === null) return null
       total += cost * rate
+      totalFees += fees * rate
     }
     // Before the first purchase there's no cost to draw, rather than a 0.
-    return total === 0 ? null : Math.round(total * 100) / 100
+    return total === 0 ? null : { cost: Math.round(total * 100) / 100, fees: Math.round(totalFees * 100) / 100 }
   }
 }
 
@@ -1069,18 +1078,32 @@ const getHistory = async (userId, { holdingId } = {}) => {
   const history = []
   for (const row of result.rows) {
     const costBasisIsReliable = row.snapshot_date >= RELIABLE_COST_BASIS_START_DATE
+    // A day saved in another currency is converted at that day's rate, not
+    // today's, so the exchange rate moving later doesn't make an unchanged
+    // holding look like its value moved (the day's rate is what it was saved with).
+    const convertThen = async (amount) => {
+      const then = await currencyService.convertAmountAsOf(amount, row.display_currency, displayCurrency, row.snapshot_date)
+      return then.available ? then : currencyService.convertAmount(amount, row.display_currency, displayCurrency)
+    }
     const [convertedValue, convertedCostBasis] = await Promise.all([
-      currencyService.convertAmount(Number(row.total_value), row.display_currency, displayCurrency),
+      convertThen(Number(row.total_value)),
       costBasisIsReliable
-        ? currencyService.convertAmount(Number(row.total_cost_basis), row.display_currency, displayCurrency)
+        ? convertThen(Number(row.total_cost_basis))
         : Promise.resolve({ available: false, amount: null })
     ])
     const snapshotCost = costBasisIsReliable ? (convertedCostBasis.available ? convertedCostBasis.amount : Number(row.total_cost_basis)) : null
-    const rebuiltCost = costOn ? await costOn(row.snapshot_date) : null
+    const rebuilt = costOn ? await costOn(row.snapshot_date) : null
     history.push({
       date: row.snapshot_date,
       totalValue: convertedValue.available ? convertedValue.amount : Number(row.total_value),
-      totalCostBasis: rebuiltCost ?? snapshotCost,
+      // Capital invested is shown without fees, the way broker apps do; the
+      // fees paid are given on their own so the real result can still be seen.
+      // Days that can't be rebuilt from trades keep the saved figure (fees
+      // included) and have no fee figure.
+      totalCostBasis: rebuilt ? Math.round((rebuilt.cost - rebuilt.fees) * 100) / 100 : snapshotCost,
+      totalFees: rebuilt ? rebuilt.fees : null,
+      // True on the days that could only use the saved figure, which has fees in it.
+      capitalIncludesFees: !rebuilt && snapshotCost !== null,
       displayCurrency: convertedValue.available ? displayCurrency : row.display_currency
     })
   }

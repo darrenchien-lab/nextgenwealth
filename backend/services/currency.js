@@ -65,6 +65,21 @@ const convertAmountAsOf = async (amount, fromCurrency, toCurrency, date) => {
   return { amount: Math.round((amount / rateFrom) * rateTo * 100) / 100, available: true }
 }
 
+// The exchange rate itself (units of `to` per unit of `from`), not rounded the
+// way a converted amount is, for callers that apply it to many amounts and sum
+// them. null when a rate has never been saved.
+const getRate = async (fromCurrency, toCurrency) => {
+  if (fromCurrency.toUpperCase() === toCurrency.toUpperCase()) return 1
+  const [rateFrom, rateTo] = await Promise.all([getRateVsUsd(fromCurrency.toUpperCase()), getRateVsUsd(toCurrency.toUpperCase())])
+  return rateFrom && rateTo ? rateTo.rate / rateFrom.rate : null
+}
+
+const getRateAsOf = async (fromCurrency, toCurrency, date) => {
+  if (fromCurrency.toUpperCase() === toCurrency.toUpperCase()) return 1
+  const [rateFrom, rateTo] = await Promise.all([rateVsUsdAsOf(fromCurrency, date), rateVsUsdAsOf(toCurrency, date)])
+  return rateFrom && rateTo ? rateTo / rateFrom : null
+}
+
 // First day the rate history covers, 'YYYY-MM-DD', or null.
 const getFirstRateDate = async () => (await query(SQL.getFirstRateDate)).rows[0]?.first_date || null
 
@@ -129,4 +144,4 @@ const catchUpIfStale = async () => {
   }
 }
 
-module.exports = { convertAmount, convertAmountAsOf, getFirstRateDate, fetchAndCacheDailyRates, getCacheStaleness, getSupportedCurrencies, catchUpIfStale }
+module.exports = { convertAmount, convertAmountAsOf, getRate, getRateAsOf, getFirstRateDate, fetchAndCacheDailyRates, getCacheStaleness, getSupportedCurrencies, catchUpIfStale }

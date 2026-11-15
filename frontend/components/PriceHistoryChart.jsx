@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts'
+import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { CHART_RANGES, historyInRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
 import { AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
@@ -17,21 +17,57 @@ const localDay = (value) => {
 }
 
 // Price per unit over time against what the user paid on average: the market
-// line, the average price as a dashed level (below it means a loss), and a
+// line, the average price as a dashed line that moves as more is bought or
+// sold (below it means a loss at that time), and a
 // dot on each day something was bought (green) or sold (red). A trade on a
 // day with no close (a weekend for a stock) sits on the last close before it.
 // Past MAX_MARKERS trade days in view the dots would bury the line, so they
 // start hidden there (a button shows them) and come back on shorter ranges.
 const MAX_MARKERS = 15
 
-export default function PriceHistoryChart({ points, currency, averagePrice, trades, source }) {
+export default function PriceHistoryChart({ points, currency, averagePrice, trades, source, quantity }) {
   const [range, setRange] = useState('All')
   const [showTrades, setShowTrades] = useState(null)
+
+  // The average price paid (without fees) after each trade, so every day is
+  // compared with what had been paid by then, not with today's average: buying
+  // more at a higher price later must not make an earlier day look like a loss.
+  // Only possible when the trades add up to what is held; otherwise the current
+  // average is used for every day.
+  const averageSteps = useMemo(() => {
+    const ordered = [...(trades || [])].sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt) || a.id - b.id)
+    let held = 0
+    let cost = 0
+    const steps = []
+    for (const t of ordered) {
+      const q = Number(t.quantity)
+      if (t.type === 'buy') {
+        held += q
+        cost += Number(t.totalAmount) - Number(t.fee || 0)
+      } else if (held > 0) {
+        cost -= (cost / held) * q
+        held -= q
+      }
+      steps.push({ day: localDay(t.occurredAt), average: held > 1e-8 ? cost / held : null })
+    }
+    if (steps.length === 0 || (quantity !== undefined && Math.abs(held - Number(quantity)) > 1e-6)) return null
+    return steps
+  }, [trades, quantity])
+
+  const averageOn = (date) => {
+    if (!averageSteps) return averagePrice || null
+    let average = null
+    for (const step of averageSteps) {
+      if (step.day > date) break
+      average = step.average
+    }
+    return average
+  }
 
   const rows = useMemo(() => {
     const shown = historyInRange(points, range) || []
     if (shown.length === 0) return []
-    const byDate = new Map(shown.map((p) => [p.date, { ...p, trades: [] }]))
+    const byDate = new Map(shown.map((p) => [p.date, { ...p, trades: [], average: averageOn(p.date) }]))
     const dates = shown.map((p) => p.date)
     for (const t of trades) {
       const day = localDay(t.occurredAt)
@@ -44,14 +80,15 @@ export default function PriceHistoryChart({ points, currency, averagePrice, trad
       if (target) byDate.get(target).trades.push(t)
     }
     return withTimestamps(dates.map((date) => byDate.get(date)))
-  }, [points, trades, range])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points, trades, range, averageSteps, averagePrice])
 
   if (!points || points.length < 2) {
     return <p className="py-10 text-center text-sm text-gray-400 dark:text-gray-500">Not enough price history yet — it fills in as prices are saved each day.</p>
   }
 
   const values = rows.map((r) => r.price)
-  if (averagePrice) values.push(averagePrice)
+  for (const r of rows) if (r.average) values.push(r.average)
   const min = Math.min(...values)
   const max = Math.max(...values)
   const pad = (max - min) * 0.1 || max * 0.02 || 1
@@ -59,7 +96,8 @@ export default function PriceHistoryChart({ points, currency, averagePrice, trad
   const tradesVisible = showTrades ?? tradeDays <= MAX_MARKERS
   const formatDate = timeTooltipFormatter(rows)
   const last = rows[rows.length - 1]
-  const vsAverage = averagePrice ? Math.round(((last.price - averagePrice) / averagePrice) * 1000) / 10 : null
+  const currentAverage = last.average || averagePrice
+  const vsAverage = currentAverage ? Math.round(((last.price - currentAverage) / currentAverage) * 1000) / 10 : null
 
   const renderDot = ({ cx, cy, payload, index }) => {
     if (!tradesVisible || !payload.trades.length) return <g key={`d${index}`} />
@@ -70,14 +108,14 @@ export default function PriceHistoryChart({ points, currency, averagePrice, trad
   const renderTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null
     const row = payload[0].payload
-    const diff = averagePrice ? Math.round(((row.price - averagePrice) / averagePrice) * 1000) / 10 : null
+    const diff = row.average ? Math.round(((row.price - row.average) / row.average) * 1000) / 10 : null
     return (
       <div className="rounded-lg border border-[var(--tooltip-border)] bg-[var(--tooltip-bg)] px-3 py-2 text-sm text-[var(--tooltip-text)] shadow-md">
         <p className="text-xs text-gray-500 dark:text-gray-400">{formatDate(label)}</p>
         <p className="font-semibold">Price: {formatCurrency(row.price, currency)}</p>
         {diff !== null && (
           <p className={`text-xs font-medium ${diff >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-            {diff >= 0 ? '+' : ''}{diff}% vs your average
+            {diff >= 0 ? '+' : ''}{diff}% vs what you had paid by then
           </p>
         )}
         {row.trades.map((t) => (
@@ -159,7 +197,7 @@ export default function PriceHistoryChart({ points, currency, averagePrice, trad
               tickLine={false}
               width={100}
             />
-            {averagePrice && <ReferenceLine y={averagePrice} stroke="var(--chart-axis, #9ca3af)" strokeDasharray="6 4" strokeWidth={1.5} />}
+            <Line type="stepAfter" dataKey="average" stroke="var(--chart-axis, #9ca3af)" strokeDasharray="6 4" strokeWidth={1.5} dot={false} activeDot={false} isAnimationActive={false} connectNulls={false} />
             <Tooltip content={renderTooltip} cursor={{ stroke: 'var(--chart-axis, #9ca3af)', strokeWidth: 1 }} />
             <Line
               type="linear"

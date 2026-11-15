@@ -22,6 +22,9 @@ export default function PortfolioSummary({ portfolio }) {
   const gain = portfolio.totalUnrealizedGainExcludingFees
   const percent = cost > 0 ? Math.round((gain / cost) * 1000) / 10 : null
   const up = gain >= 0
+  // What the result is once the fees paid on the way in are counted too.
+  const fees = portfolio.totalCostBasis - portfolio.totalCostBasisExcludingFees
+  const afterFees = gain - fees
   const openHoldings = portfolio.holdings.filter((h) => Number(h.quantity) > 0)
   const updates = openHoldings.map((h) => h.price_updated_at).filter(Boolean).sort()
   const lastUpdate = updates.length > 0 ? updates[updates.length - 1] : null
@@ -52,6 +55,11 @@ export default function PortfolioSummary({ portfolio }) {
               {percent !== null && <span className="font-medium opacity-80">· {up ? '+' : '−'}{Math.abs(percent)}%</span>}
             </span>
             <span className="text-xs text-gray-400 dark:text-gray-500">Unrealized P&amp;L</span>
+            {fees > 0.005 && (
+              <span className="text-xs text-gray-500 dark:text-gray-400" title="Fees paid on your purchases, and the result once they are counted">
+                · After fees {afterFees >= 0 ? '+' : '−'}{formatCurrency(Math.abs(afterFees), currency)} <span className="text-gray-400 dark:text-gray-500">(fees {formatCurrency(fees, currency)})</span>
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-col justify-center gap-3 border-t border-gray-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0 dark:border-gray-700">

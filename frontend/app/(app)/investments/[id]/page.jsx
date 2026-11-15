@@ -192,6 +192,7 @@ export default function HoldingDetailPage() {
                 points={priceHistory.points}
                 currency={priceHistory.currency || currency}
                 averagePrice={holding.averagePriceExcludingFees}
+                quantity={holding.quantity}
                 trades={holding.transactions}
                 source={priceHistory.source}
               />

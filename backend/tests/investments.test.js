@@ -1,7 +1,7 @@
 'use strict'
 const { test, after } = require('node:test')
 const assert = require('node:assert/strict')
-const { createTestUser, cleanupTestUsers } = require('./helpers')
+const { createTestUser, cleanupTestUsers, pool } = require('./helpers')
 
 after(async () => {
   await cleanupTestUsers()
@@ -233,4 +233,52 @@ test('investments: the result can be measured over any date range, and a bad ran
   assert.equal(res.holdings[0].name, 'RNG')
   assert.equal((await as.get('/investments/performance?startDate=not-a-date')).status, 400)
   assert.equal((await as.get(`/investments/performance?startDate=${key}&endDate=2000-01-01`)).status, 400)
+})
+
+test('investments: a day saved in another currency is converted at the rate of that day, so a rate change alone moves nothing', async () => {
+  const { as, user } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'USD' })
+  const day = (n) => {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    return localDay(d)
+  }
+  // A holding worth the same 1,000 dollars each day, saved in a currency whose rate moved from 100 to 125.
+  await pool.query("DELETE FROM exchange_rates WHERE quote_currency = 'ISK'")
+  try {
+    await pool.query(
+      "INSERT INTO exchange_rates (base_currency, quote_currency, rate, fetched_at) VALUES ('USD', 'ISK', 100, $1), ('USD', 'ISK', 125, $2), ('USD', 'ISK', 125, NOW())",
+      [`${day(3)}T12:00:00`, `${day(2)}T12:00:00`]
+    )
+    await pool.query(
+      "INSERT INTO investment_snapshots (user_id, snapshot_date, total_value, total_cost_basis, display_currency) VALUES ($1, $2, 100000, 100000, 'ISK'), ($1, $3, 125000, 125000, 'ISK')",
+      [user.id, day(3), day(2)]
+    )
+    const history = (await as.get('/investments/history')).body.history
+    const byDate = Object.fromEntries(history.map((h) => [h.date, h]))
+    assert.equal(byDate[day(3)].totalValue, 1000)
+    assert.equal(byDate[day(2)].totalValue, 1000)
+  } finally {
+    await pool.query("DELETE FROM exchange_rates WHERE quote_currency = 'ISK'")
+  }
+})
+
+test('investments: the capital line leaves fees out and the fees paid come with it, so the result after fees can still be worked out', async () => {
+  const { user, as } = await createTestUser()
+  await as.put('/accounts/display-currency').send({ currency: 'USD' })
+  const holding = (await as.post('/investments').send({ assetName: 'FEE', assetType: 'etf', quantity: 20, currency: 'USD', totalSpent: 2453.38, price: 122.58 })).body.holding
+  const day = (n) => {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    return localDay(d)
+  }
+  await pool.query("UPDATE investment_transactions SET occurred_at = $2 WHERE holding_id = $1", [holding.id, `${day(3)} 12:00:00`])
+  await pool.query(
+    "INSERT INTO investment_holding_snapshots (user_id, holding_id, snapshot_date, asset_name, value, cost_basis, display_currency) VALUES ($1, $2, $3, 'FEE', 2451.60, 2453.38, 'USD')",
+    [user.id, holding.id, day(1)]
+  )
+  const row = (await as.get(`/investments/history?holdingId=${holding.id}`)).body.history.find((h) => h.date === day(1))
+  assert.equal(row.totalValue, 2451.6)
+  assert.equal(row.totalCostBasis, 2451.6)
+  assert.equal(row.totalFees, 1.78)
 })

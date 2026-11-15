@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Pencil, X, Plus, Minus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers, Zap, RefreshCw } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
+import { sortCurrencies } from '@/lib/currencies'
 import { CHART_RANGES, applyChartRange, withTimestamps, timeAxisTicks, timeAxisFormatter, timeTooltipFormatter } from '@/lib/chartRanges'
 import TrendAreaChart from '@/components/TrendAreaChart'
 import CardHeader from '@/components/CardHeader'
@@ -671,7 +672,7 @@ export default function InvestmentsPage() {
                       <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Currency</label>
                       <select required value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value, accountId: '' })} className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 transition-colors duration-150 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-gray-500 px-3 py-2 text-sm">
                         <option value="" disabled className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">Select currency</option>
-                        {(currencies.length === 0 ? ['IDR'] : currencies).map((c) => <option key={c} value={c} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{c}</option>)}
+                        {sortCurrencies(currencies.length === 0 ? ['IDR'] : currencies).map((c) => <option key={c} value={c} className="bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">{c}</option>)}
                       </select>
                     </div>
                   </div>
@@ -817,6 +818,7 @@ export default function InvestmentsPage() {
                 return <p className="mb-4 text-sm text-gray-400 dark:text-gray-500">{picked ? `You didn't hold ${picked.asset_name} ${rangeName}.` : `No investments ${rangeName}.`}</p>
               }
               const up = result.pnl >= 0
+              const flat = Math.abs(result.pnl) < 0.005
               return (
                 <div className="mb-4">
                   <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
@@ -826,7 +828,7 @@ export default function InvestmentsPage() {
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className={`inline-flex items-center gap-1 text-2xl font-semibold tracking-tight ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                       {up ? <ArrowUpRight size={22} strokeWidth={2.5} /> : <ArrowDownRight size={22} strokeWidth={2.5} />}
-                      {up ? '+' : '−'}{formatCurrency(Math.abs(result.pnl), currency)}
+                      {flat ? '' : up ? '+' : '−'}{formatCurrency(Math.abs(result.pnl), currency)}
                     </span>
                     {result.percent !== null && (
                       <span className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${up ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
@@ -834,7 +836,7 @@ export default function InvestmentsPage() {
                       </span>
                     )}
                     <span className="text-xs text-gray-400 dark:text-gray-500" title="Only price changes count. Fees, and money you bought or sold, don't">
-                      {up ? 'Up' : 'Down'} because prices {up ? 'rose' : 'fell'}
+                      {flat ? 'Prices have not moved' : `${up ? 'Up' : 'Down'} because prices ${up ? 'rose' : 'fell'}`}
                     </span>
                     {picked && <Link href={`/investments/${picked.id}`} className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">View details →</Link>}
                   </div>
@@ -851,13 +853,18 @@ export default function InvestmentsPage() {
                 dataKey="totalValue"
                 name="Market value"
                 description="what it's worth at market price"
-                secondary={{ dataKey: 'totalCostBasis', name: 'Capital invested', description: 'the money you put in, fees included', color: '#3b82f6', solid: true }}
+                secondary={{ dataKey: 'totalCostBasis', name: 'Capital invested', description: filteredHistory.some((row) => row.capitalIncludesFees) ? 'the money you put in, fees included' : 'the money you put in, not counting fees', color: '#3b82f6', solid: true }}
                 hint="Both lines rise together when you buy more; the gap between them is your profit, and it only changes when prices move."
                 tooltipExtra={(row) => {
                   const lines = []
                   if (row.totalCostBasis !== null && row.totalCostBasis !== undefined) {
                     const profit = row.totalValue - row.totalCostBasis
                     lines.push({ label: 'Profit', value: `${profit >= 0 ? '+' : ''}${formatCurrency(profit, portfolio.displayCurrency)}`, tone: profit >= 0 ? 'up' : 'down' })
+                    if (row.totalFees > 0) {
+                      const afterFees = profit - row.totalFees
+                      lines.push({ label: 'Fees paid', value: formatCurrency(row.totalFees, portfolio.displayCurrency) })
+                      lines.push({ label: 'After fees', value: `${afterFees >= 0 ? '+' : '−'}${formatCurrency(Math.abs(afterFees), portfolio.displayCurrency)}`, tone: afterFees >= 0 ? 'up' : 'down' })
+                    }
                   }
                   for (const trade of row.trades || []) lines.push({ label: trade })
                   return lines
