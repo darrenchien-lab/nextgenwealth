@@ -13,13 +13,17 @@ router.get('/', asyncHandler(async (req, res) => {
 
 router.get('/config', asyncHandler(async (req, res) => {
   const settings = await insightsService.getSettings(req.userId)
-  res.json({ success: true, activeProvider: settings.active_provider, providerConfig: settings.provider_config })
+  res.json({ success: true, ...insightsService.publicConfig(settings) })
 }))
 
-router.put('/config', asyncHandler(async (req, res) => {
-  const { activeProvider, providerConfig } = req.body || {}
-  const settings = await insightsService.upsertSettings(req.userId, { activeProvider, providerConfig })
-  res.json({ success: true, activeProvider: settings.active_provider, providerConfig: settings.provider_config })
+router.get('/summary', asyncHandler(async (req, res) => {
+  const result = await insightsService.getSummary(req.userId)
+  res.json({ success: true, ...result })
+}))
+
+router.put('/preferences', asyncHandler(async (req, res) => {
+  const settings = await insightsService.setAiSummary(req.userId, !!(req.body || {}).aiSummary)
+  res.json({ success: true, ...insightsService.publicConfig(settings) })
 }))
 
 module.exports = router

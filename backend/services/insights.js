@@ -1,27 +1,21 @@
 'use strict'
 const { query } = require('../db/pool')
 const { loadSql } = require('../db/loadSql')
-const { badRequest } = require('../shared/utils')
-const aggregates = require('../shared/financialAggregates')
-const savingsGoalsService = require('./savingsGoals')
+const insightRules = require('./insightRules')
+const insightSummary = require('./insightSummary')
 
 const SQL = {
   hasAnyTransactions: loadSql('insights/hasAnyTransactions'),
   getSettings: loadSql('insights/getSettings'),
   upsertSettings: loadSql('insights/upsertSettings'),
-  saveExternalAiInsights: loadSql('insights/saveExternalAiInsights'),
   saveRuleBasedInsights: loadSql('insights/saveRuleBasedInsights'),
   listAllUserIds: loadSql('insights/listAllUserIds')
 }
 
-const PROVIDERS = ['rule_based', 'external_ai']
-
-const monthRange = (offsetMonths = 0) => {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth() + offsetMonths, 1)
-  const end = new Date(now.getFullYear(), now.getMonth() + offsetMonths + 1, 0, 23, 59, 59)
-  return { startDate: start.toISOString(), endDate: end.toISOString() }
-}
+// Findings made a moment ago, so the Insights page (which asks for the
+// findings and then for the summary of them) doesn't run the whole engine twice.
+const RECENT_MS = 15 * 1000
+const recent = new Map() // userId -> { items, at }
 
 const hasAnyTransactions = async (userId) => {
   const result = await query(SQL.hasAnyTransactions, [userId])
@@ -33,99 +27,47 @@ const getSettings = async (userId) => {
   return result.rows[0] || { user_id: userId, active_provider: 'rule_based', provider_config: {}, last_insights: null }
 }
 
-const upsertSettings = async (userId, { activeProvider, providerConfig }) => {
-  if (!PROVIDERS.includes(activeProvider)) throw badRequest(`activeProvider must be one of: ${PROVIDERS.join(', ')}`)
-  if (activeProvider === 'external_ai' && !providerConfig?.apiKey) {
-    throw badRequest('providerConfig.apiKey is required for the external_ai provider')
-  }
+// What the page may see of the saved settings.
+const publicConfig = (settings) => ({ aiSummary: !!settings.provider_config?.aiSummary })
 
-  const result = await query(SQL.upsertSettings, [userId, activeProvider, JSON.stringify(providerConfig || {})])
+// Turns the personal summary on or off. It is the only setting there is.
+const setAiSummary = async (userId, enabled) => {
+  const settings = await getSettings(userId)
+  const config = { ...(settings.provider_config || {}), aiSummary: !!enabled }
+  const result = await query(SQL.upsertSettings, [userId, 'rule_based', JSON.stringify(config)])
   return result.rows[0]
 }
 
-// The default provider: derives a handful of plain-language statements
-// straight from the same aggregates `reports` uses, so numbers never
-// disagree between the dashboard and this text (design.md Decision 6/7).
-const generateRuleBasedInsights = async (userId) => {
-  const insights = []
+const asItems = (texts) => texts.map((text, i) => ({ id: `text-${i}`, tone: 'info', title: null, text, href: null }))
 
-  const breakdown = await aggregates.getExpenseBreakdown(userId, monthRange(0))
-  if (breakdown.breakdown.length > 0) {
-    const top = [...breakdown.breakdown].sort((a, b) => b.amount - a.amount)[0]
-    insights.push(`Your top spending category this month is ${top.categoryName} at ${top.percentage}% of expenses.`)
-  }
-
-  const [current, previous] = await Promise.all([
-    aggregates.getIncomeExpense(userId, monthRange(0)),
-    aggregates.getIncomeExpense(userId, monthRange(-1))
-  ])
-  if (current.income > 0 && previous.income > 0) {
-    const currentRate = (current.income - current.expense) / current.income
-    const previousRate = (previous.income - previous.expense) / previous.income
-    const delta = Math.round((currentRate - previousRate) * 1000) / 10
-    if (delta > 0) insights.push(`Your savings rate improved by ${delta} percentage points versus last month.`)
-    else if (delta < 0) insights.push(`Your savings rate dropped by ${Math.abs(delta)} percentage points versus last month.`)
-  }
-
-  const goals = await savingsGoalsService.listGoals(userId)
-  const nearingCompletion = goals.find((g) => !g.isComplete && g.progressPercentage >= 80)
-  if (nearingCompletion) {
-    insights.push(`You're ${nearingCompletion.progressPercentage}% of the way to your "${nearingCompletion.name}" goal — almost there!`)
-  }
-
-  return insights
-}
-
-const generateExternalAiInsights = async (userId, providerConfig) => {
-  const snapshot = {
-    dashboard: await aggregates.getIncomeExpense(userId, monthRange(0)),
-    breakdown: await aggregates.getExpenseBreakdown(userId, monthRange(0))
-  }
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 8000)
-  try {
-    const response = await fetch(providerConfig.apiUrl || 'https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${providerConfig.apiKey}` },
-      body: JSON.stringify({ snapshot }),
-      signal: controller.signal
-    })
-    if (!response.ok) throw new Error(`External AI provider returned HTTP ${response.status}`)
-    const data = await response.json()
-    return Array.isArray(data.insights) ? data.insights : [String(data.insight || data.result || '')]
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
+// The findings for the current cycle. Always worked out fresh.
 const getInsights = async (userId) => {
   if (!(await hasAnyTransactions(userId))) {
-    return {
-      insights: ["Welcome to NextGen Wealth! Add your first transaction to start getting personalized insights."],
-      source: 'starter'
-    }
+    const text = 'Welcome to NextGen Wealth! Add your first transaction to start getting personalized insights.'
+    return { insights: [text], items: asItems([text]), headline: null, source: 'starter' }
   }
 
   const settings = await getSettings(userId)
+  const items = await insightRules.generate(userId)
+  const insights = items.map((item) => (item.title ? `${item.title}. ${item.text}` : item.text))
+  await query(SQL.saveRuleBasedInsights, [userId, 'rule_based', JSON.stringify(settings.provider_config || {}), JSON.stringify(insights)])
+  recent.set(userId, { items, at: Date.now() })
+  return { insights, items, headline: insightRules.headline(items), source: 'rule_based' }
+}
 
-  if (settings.active_provider === 'external_ai') {
-    try {
-      const insights = await generateExternalAiInsights(userId, settings.provider_config)
-      await query(SQL.saveExternalAiInsights, [userId, JSON.stringify(settings.provider_config), JSON.stringify(insights)])
-      return { insights, source: 'external_ai' }
-    } catch (err) {
-      console.error('External AI insight provider failed, falling back:', err.message)
-      if (settings.last_insights) {
-        return { insights: settings.last_insights, source: 'external_ai_fallback_cached' }
-      }
-      // No cached insights yet either — fall through to the rule-based provider.
-    }
+// The short AI-written paragraph, only when the person asked for it. null
+// when it is off, there is nothing to say, or the AI could not be reached.
+const getSummary = async (userId) => {
+  const settings = await getSettings(userId)
+  if (!settings.provider_config?.aiSummary) return { enabled: false, summary: null }
+  try {
+    const seen = recent.get(userId)
+    const items = seen && Date.now() - seen.at < RECENT_MS ? seen.items : (await getInsights(userId)).items
+    return { enabled: true, summary: await insightSummary.summarize(userId, items) }
+  } catch (err) {
+    console.error('Insight summary failed:', err.message)
+    return { enabled: true, summary: null }
   }
-
-  const insights = await generateRuleBasedInsights(userId)
-  await query(SQL.saveRuleBasedInsights, [userId, settings.active_provider, JSON.stringify(settings.provider_config || {}), JSON.stringify(insights)])
-  return { insights, source: 'rule_based' }
 }
 
 const refreshAllUsersInsights = async () => {
@@ -139,4 +81,4 @@ const refreshAllUsersInsights = async () => {
   }
 }
 
-module.exports = { getSettings, upsertSettings, getInsights, refreshAllUsersInsights, PROVIDERS }
+module.exports = { getSettings, publicConfig, setAiSummary, getSummary, getInsights, refreshAllUsersInsights }
