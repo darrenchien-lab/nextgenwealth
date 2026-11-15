@@ -58,6 +58,8 @@ export async function request(path, options = {}) {
   // password on the login form itself) is just an error for that form.
   if (response.status === 401 && token) {
     clearToken()
+    // A full page load on purpose: it drops everything held in memory from the ended session.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     if (typeof window !== 'undefined') window.location.href = '/login?expired=1'
     throw new ApiError('Session expired', 401, 'UNAUTHORIZED')
   }

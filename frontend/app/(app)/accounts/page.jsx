@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import { todayInputValue } from '@/lib/dates'
+import { sortCurrencies } from '@/lib/currencies'
 import CardHeader from '@/components/CardHeader'
 import PageSkeleton from '@/components/PageSkeleton'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -38,6 +39,16 @@ function validateTransferForm(f) {
 
 // Archived accounts are excluded — this is "what do I actually have right
 // now", not a historical total.
+// How many accounts each currency has, active and archived, for the card captions.
+function countAccounts(accounts) {
+  const counts = {}
+  for (const a of accounts) {
+    counts[a.currency] = counts[a.currency] || { active: 0, archived: 0 }
+    counts[a.currency][a.is_archived ? 'archived' : 'active'] += 1
+  }
+  return counts
+}
+
 function summarizeBalances(accounts) {
   const totals = {}
   for (const a of accounts) {
@@ -132,6 +143,7 @@ export default function AccountsPage() {
   const visibleAccounts = showArchived ? accounts : accounts.filter((a) => !a.is_archived)
   const balanceTotals = summarizeBalances(accounts)
   const balanceCurrencies = Object.keys(balanceTotals)
+  const accountCounts = countAccounts(accounts)
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -336,7 +348,7 @@ export default function AccountsPage() {
               color="blue"
               label={balanceCurrencies.length > 1 ? `Total Balance (${currency})` : 'Total Balance'}
               value={formatCurrency(balanceTotals[currency], currency)}
-              hint="active accounts"
+              hint={`${accountCounts[currency].active} ${accountCounts[currency].active === 1 ? 'account' : 'accounts'}${accountCounts[currency].archived > 0 ? ` · ${accountCounts[currency].archived} archived` : ''}`}
             />
           ))}
         </div>
@@ -371,7 +383,7 @@ export default function AccountsPage() {
               <option value="">Currency</option>
               {currencies.length === 0
                 ? <option value="IDR">IDR</option>
-                : currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+                : sortCurrencies(currencies).map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <input
               type="number" step="any"

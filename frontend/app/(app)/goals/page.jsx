@@ -1,17 +1,36 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { Target, Plus, Pencil, Trash2, X, Landmark, TrendingUp, Link2, HandCoins, CheckCircle2, AlertTriangle, Clock, CalendarX } from 'lucide-react'
+import { Target, Plus, Pencil, Trash2, X, Landmark, TrendingUp, Link2, HandCoins, CheckCircle2, AlertTriangle, Clock, CalendarX, CalendarClock, PiggyBank, Lightbulb } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
 import { todayInputValue } from '@/lib/dates'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import SummaryCard from '@/components/SummaryCard'
+import { currencyLabel, sortCurrencies, useSupportedCurrencies } from '@/lib/currencies'
 import PageSkeleton from '@/components/PageSkeleton'
 
 const INPUT = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100'
 
 const formatMonth = (dateKey) => new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+
+// How long until the target date, in words: "5 months left", "12 days left", "3 days overdue".
+function timeLeft(dateKey) {
+  const target = new Date(`${dateKey}T00:00:00`)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((target - today) / 86400000)
+  if (days < 0) return { text: `${Math.abs(days)} ${Math.abs(days) === 1 ? 'day' : 'days'} overdue`, late: true }
+  if (days === 0) return { text: 'Due today', late: false }
+  if (days > 60) return { text: `${Math.round(days / 30.44)} months left`, late: false }
+  return { text: `${days} ${days === 1 ? 'day' : 'days'} left`, late: false }
+}
+
+// The bar's colour says how the goal is going.
+const BAR_COLOR = { complete: 'bg-emerald-500', on_track: 'bg-emerald-500', behind: 'bg-amber-500', overdue: 'bg-red-500' }
+
+// A round figure to suggest: whole ten-thousands once the amount is large.
+const roundSuggestion = (value) => (value >= 1000000 ? Math.round(value / 10000) * 10000 : Math.round(value))
 
 const STATUS = {
   complete: { label: 'Reached', icon: CheckCircle2, className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
@@ -67,17 +86,25 @@ function GoalCard({ goal, onEdit, onDelete, onMoveMoney }) {
         <p className="text-xl font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(goal.saved_amount, goal.currency)}</p>
         <p className="text-sm text-gray-500 dark:text-gray-400">of {formatCurrency(goal.target_amount, goal.currency)}</p>
       </div>
-      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
-        <div className={`h-full rounded-full ${goal.isComplete ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, goal.progressPercentage)}%` }} />
+      <div className="relative mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+        <div className={`h-full rounded-full transition-all duration-500 ${goal.isComplete ? 'bg-emerald-500' : (BAR_COLOR[goal.plan.status] || 'bg-blue-500')}`} style={{ width: `${Math.min(100, goal.progressPercentage)}%` }} />
+        {[25, 50, 75].map((mark) => <span key={mark} aria-hidden="true" className="absolute top-0 h-full w-px bg-white/70 dark:bg-gray-800/80" style={{ left: `${mark}%` }} />)}
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{goal.progressPercentage}%</span>
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+          {goal.progressPercentage}%{!goal.isComplete && <> · {formatCurrency(Math.max(0, Number(goal.target_amount) - Number(goal.saved_amount)), goal.currency)} to go</>}
+        </span>
         {status && (
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${status.className}`}>
             <StatusIcon size={12} /> {status.label}
           </span>
         )}
       </div>
+
+      {!goal.isComplete && goal.target_date && (() => {
+        const left = timeLeft(goal.target_date.slice(0, 10))
+        return <p className={`mt-2 inline-flex w-fit items-center gap-1 text-xs font-medium ${left.late ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}><CalendarClock size={12} /> {left.text}</p>
+      })()}
 
       <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{planSentence(goal)}</p>
 
@@ -110,6 +137,7 @@ function GoalCard({ goal, onEdit, onDelete, onMoveMoney }) {
 }
 
 export default function GoalsPage() {
+  const supportedCurrencies = useSupportedCurrencies()
   const [goals, setGoals] = useState([])
   const [accounts, setAccounts] = useState([])
   const [holdings, setHoldings] = useState([])
@@ -123,6 +151,7 @@ export default function GoalsPage() {
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [deletingGoal, setDeletingGoal] = useState(null)
+  const [suggestion, setSuggestion] = useState(null)
 
   async function loadGoals() {
     try {
@@ -144,12 +173,15 @@ export default function GoalsPage() {
     init()
   }, [])
 
-  const currencyOptions = Array.from(new Set([displayCurrency, ...accounts.map((a) => a.currency)]))
+  const currencyOptions = sortCurrencies([displayCurrency, ...accounts.map((a) => a.currency), ...supportedCurrencies])
 
   function openNew() {
     setForm({ ...emptyForm(), currency: displayCurrency })
     setFormError('')
     setEditingGoal({})
+    // What an emergency fund could be, from the person's own spending; the form just goes without it if this fails.
+    setSuggestion(null)
+    request('/goals/suggestions').then(setSuggestion).catch(() => {})
   }
 
   function openEdit(goal) {
@@ -231,6 +263,24 @@ export default function GoalsPage() {
   }
 
 
+  // Goals still being worked on come first, the nearest target date at the top; reached ones are listed apart.
+  const byTargetDate = (a, b) => {
+    const da = a.target_date ? a.target_date.slice(0, 10) : '9999-12-31'
+    const db = b.target_date ? b.target_date.slice(0, 10) : '9999-12-31'
+    return da === db ? b.progressPercentage - a.progressPercentage : da < db ? -1 : 1
+  }
+  const activeGoals = goals.filter((g) => !g.isComplete).sort(byTargetDate)
+  const reachedGoals = goals.filter((g) => g.isComplete)
+  const totalsByCurrency = {}
+  for (const g of goals) {
+    const t = totalsByCurrency[g.currency] || { saved: 0, target: 0 }
+    t.saved += Math.min(Number(g.saved_amount), Number(g.target_amount))
+    t.target += Number(g.target_amount)
+    totalsByCurrency[g.currency] = t
+  }
+  const totalCurrencies = Object.keys(totalsByCurrency)
+  const nextGoal = activeGoals.find((g) => g.target_date)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -260,18 +310,50 @@ export default function GoalsPage() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {goals.map((goal) => (
-            <GoalCard key={goal.id} goal={goal} onEdit={openEdit} onDelete={setDeletingGoal} onMoveMoney={handleMoveMoney} />
-          ))}
-        </div>
-      )}
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <SummaryCard icon={Target} color="emerald" label="Goals" value={String(goals.length)} hint={`${activeGoals.length} in progress · ${reachedGoals.length} reached`} />
+            {totalCurrencies.map((currency) => {
+              const t = totalsByCurrency[currency]
+              return (
+                <SummaryCard
+                  key={currency}
+                  icon={PiggyBank}
+                  color="blue"
+                  label={totalCurrencies.length > 1 ? `Saved (${currency})` : 'Saved toward goals'}
+                  value={formatCurrency(t.saved, currency)}
+                  hint={`of ${formatCurrency(t.target, currency)} · ${t.target > 0 ? Math.round((t.saved / t.target) * 100) : 0}%`}
+                />
+              )
+            })}
+            <SummaryCard icon={CalendarClock} color="amber" label="Next target date" hint={nextGoal ? nextGoal.name : 'No target dates set'}>
+              <p className="mt-1.5 truncate text-lg font-semibold text-gray-900 dark:text-gray-100">{nextGoal ? formatMonth(nextGoal.target_date.slice(0, 10)) : '—'}</p>
+            </SummaryCard>
+          </div>
 
-      <p className="border-t border-gray-100 pt-6 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-        Investment allocation targets are set on the{' '}
-        <Link href="/reports" className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">Reports</Link>{' '}
-        page, in the Target vs Actual Allocation card.
-      </p>
+          {activeGoals.length > 0 && (
+            <section>
+              {reachedGoals.length > 0 && <h2 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">In progress <span className="font-normal text-gray-400 dark:text-gray-500">· {activeGoals.length}</span></h2>}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {activeGoals.map((goal) => (
+                  <GoalCard key={goal.id} goal={goal} onEdit={openEdit} onDelete={setDeletingGoal} onMoveMoney={handleMoveMoney} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {reachedGoals.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Reached <span className="font-normal text-gray-400 dark:text-gray-500">· {reachedGoals.length}</span></h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {reachedGoals.map((goal) => (
+                  <GoalCard key={goal.id} goal={goal} onEdit={openEdit} onDelete={setDeletingGoal} onMoveMoney={handleMoveMoney} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
 
       {editingGoal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setEditingGoal(null)}>
@@ -294,10 +376,28 @@ export default function GoalsPage() {
               <label className="block text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
                 Currency
                 <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} className={`${INPUT} mt-1`}>
-                  {currencyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {currencyOptions.map((c) => <option key={c} value={c}>{currencyLabel(c)}</option>)}
                 </select>
               </label>
             </div>
+
+            {!editingGoal.id && suggestion?.averageMonthlyExpense > 0 && form.currency === suggestion.displayCurrency && (
+              <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900 ring-1 ring-amber-100 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-800/40">
+                <p className="flex items-start gap-1.5"><Lightbulb size={14} className="mt-0.5 shrink-0" /> An emergency fund usually covers 3 to 6 months of spending. You spend about {formatCurrency(suggestion.averageMonthlyExpense, suggestion.displayCurrency)} a cycle (over the last {suggestion.cyclesCounted} {suggestion.cyclesCounted === 1 ? 'cycle' : 'cycles'}).</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[3, 6].map((months) => (
+                    <button
+                      key={months}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, name: f.name.trim() ? f.name : 'Emergency fund', targetAmount: String(roundSuggestion(suggestion.averageMonthlyExpense * months)) }))}
+                      className="rounded-full bg-white px-3 py-1 font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-gray-800 dark:text-amber-200 dark:ring-amber-800/60 dark:hover:bg-gray-700"
+                    >
+                      {months} months · {formatCurrency(roundSuggestion(suggestion.averageMonthlyExpense * months), suggestion.displayCurrency)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="-mt-2 text-xs text-gray-400 dark:text-gray-500">
               Emergency fund? A common rule is 3–6 months of your expenses.
             </p>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { TrendingUp, TrendingDown, PiggyBank, Landmark, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, Landmark, Receipt, Target, PieChart as PieIcon, ArrowRightLeft, RefreshCw, ShoppingBag, Sparkles, AlertTriangle, ChevronRight } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
@@ -15,6 +15,7 @@ import SpendingPaceCard from '@/components/SpendingPaceCard'
 import DonutChart from '@/components/DonutChart'
 import RecentTransactionsCard from '@/components/RecentTransactionsCard'
 import QuickAddTransactionModal from '@/components/QuickAddTransactionModal'
+import SmartEntryModal from '@/components/SmartEntryModal'
 import { todayInputValue } from '@/lib/dates'
 import { getHideAmountsDefault } from '@/lib/preferences'
 import { withDistinctColors, useChartTheme } from '@/lib/chartColors'
@@ -43,6 +44,8 @@ export default function DashboardPage() {
   const [allocationActive, setAllocationActive] = useState(null)
   const [expenseActive, setExpenseActive] = useState(null)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [showSmartEntry, setShowSmartEntry] = useState(false)
+  const [attention, setAttention] = useState([])
   const [reloadKey, setReloadKey] = useState(0)
   const [breakdown, setBreakdown] = useState(null)
   const chartTheme = useChartTheme()
@@ -59,6 +62,20 @@ export default function DashboardPage() {
   const [payDate, setPayDate] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // The findings that need a look, for the strip under the header. A failure
+  // just leaves the strip out.
+  useEffect(() => {
+    async function loadAttention() {
+      try {
+        const data = await request('/insights')
+        setAttention((data.items || []).filter((i) => i.tone === 'warning'))
+      } catch {
+        setAttention([])
+      }
+    }
+    loadAttention()
+  }, [reloadKey])
 
   // Balance cards start hidden when that is the saved preference (Settings).
   useEffect(() => {
@@ -91,8 +108,8 @@ export default function DashboardPage() {
         // recorded, even with an older date, shows up); for last cycle, that
         // cycle's own latest, like every other card on the page.
         const recentData = periodOffset === 1
-          ? await request(`/transactions?period=${budgetsData.period}&limit=6`)
-          : await request('/transactions?limit=6')
+          ? await request(`/transactions?period=${budgetsData.period}&limit=7`)
+          : await request('/transactions?limit=7')
         setSummary(summaryData)
         setTrends(trendsData.trends)
         setAllocation(allocationData)
@@ -206,6 +223,12 @@ export default function DashboardPage() {
               </button>
             </div>
           )}
+          <button
+            onClick={() => setShowSmartEntry(true)}
+            className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3.5 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-100 transition-colors duration-150 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800/40 dark:hover:bg-emerald-900/50"
+          >
+            <Sparkles size={14} /> Quick add
+          </button>
           <div className="flex gap-1 rounded-full bg-gray-100 dark:bg-gray-700 p-1">
           <button
             onClick={() => setPeriodOffset(1)}
@@ -222,6 +245,17 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {attention.length > 0 && (
+        <Link href="/insights" className="flex items-center gap-3 rounded-xl bg-amber-50 px-4 py-2.5 ring-1 ring-amber-100 transition-opacity duration-150 hover:opacity-80 dark:bg-amber-900/20 dark:ring-amber-800/40">
+          <AlertTriangle size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="min-w-0 flex-1 truncate text-sm text-gray-700 dark:text-gray-200">
+            <span className="font-semibold">{attention.length === 1 ? attention[0].title : `${attention.length} things need your attention`}</span>
+            {attention.length > 1 && <span className="text-gray-500 dark:text-gray-400"> · {attention[0].title}</span>}
+          </p>
+          <span className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">See insights <ChevronRight size={14} /></span>
+        </Link>
+      )}
 
       {rateRefreshError && <p className="text-sm text-red-600 dark:text-red-400">{rateRefreshError}</p>}
 
@@ -289,10 +323,10 @@ export default function DashboardPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2">
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 flex flex-col lg:col-span-2 lg:h-[300px]">
           <CardHeader icon={TrendingUp} color="emerald" title="Cash Flow (last 6 months)" />
           {hasTrendData ? (
-            <div className="min-h-[160px] flex-1">
+            <div className="min-h-[200px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trends}>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
@@ -310,7 +344,13 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2">
+        <SpendingPaceCard current={cycleTrend} previous={previousTrend} budgeted={budgetTrend} budgets={budgetList?.budgets} categories={categories} currency={currency} className="lg:col-span-2 lg:h-[300px]" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <RecentTransactionsCard compact className="lg:col-span-2 lg:row-span-2" transactions={recent} accounts={accounts} categories={categories} hideAmounts={hideAmounts} cycleLabel={recentPeriod ? periodLabel : null} seeAllHref={recentPeriod ? `/transactions?period=${recentPeriod}` : '/transactions'} onAdd={() => setShowQuickAdd(true)} />
+
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2 lg:h-[210px]">
           <CardHeader
             icon={ShoppingBag}
             color="red"
@@ -333,13 +373,9 @@ export default function DashboardPage() {
               </ScrollFadeList>
             </div>
           ) : (
-            <EmptyChartState label="No spending this cycle yet" />
+            <EmptyChartState label="No spending this cycle yet" compact />
           )}
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <SpendingPaceCard current={cycleTrend} previous={previousTrend} budgeted={budgetTrend} budgets={budgetList?.budgets} categories={categories} currency={currency} className="lg:col-span-2 lg:h-[250px]" />
 
         <div className="flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-5 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:h-[250px]">
           <CardHeader
@@ -431,7 +467,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <RecentTransactionsCard transactions={recent} accounts={accounts} categories={categories} hideAmounts={hideAmounts} cycleLabel={recentPeriod ? periodLabel : null} seeAllHref={recentPeriod ? `/transactions?period=${recentPeriod}` : '/transactions'} onAdd={() => setShowQuickAdd(true)} />
+      {showSmartEntry && (
+        <SmartEntryModal
+          onClose={() => setShowSmartEntry(false)}
+          onSaved={() => { setShowSmartEntry(false); setReloadKey((k) => k + 1) }}
+        />
+      )}
 
       {showQuickAdd && (
         <QuickAddTransactionModal

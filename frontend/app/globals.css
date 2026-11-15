@@ -144,6 +144,10 @@ textarea:focus {
   div.fixed.inset-0.z-50 > div {
     animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
+  .pop-in {
+    animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: bottom right;
+  }
   /* Each page eases in when you navigate to it. */
   .page-enter {
     animation: page-in 0.25s ease-out;

@@ -7,19 +7,10 @@ import { request, clearToken } from '@/lib/apiClient'
 import { getPreferredTheme, setTheme as persistTheme } from '@/lib/theme'
 import { getHideAmountsDefault, setHideAmountsDefault } from '@/lib/preferences'
 import ConfirmDialog from '@/components/ConfirmDialog'
-import { PROFILE_EVENT } from '@/components/SidebarGreeting'
+import { PROFILE_EVENT } from '@/lib/useProfile'
 import DayOfMonthPicker from '@/components/DayOfMonthPicker'
+import { COMMON_CURRENCIES, currencyLabel, sortCurrencies, useSupportedCurrencies } from '@/lib/currencies'
 import { ChangePasswordModal, DeleteAccountModal } from '@/components/account/AccountModals'
-
-const COMMON_CURRENCIES = ['IDR', 'USD', 'TWD', 'SGD', 'MYR', 'EUR', 'GBP', 'JPY', 'CNY', 'AUD']
-
-const currencyName = (code) => {
-  try {
-    return new Intl.DisplayNames(['en'], { type: 'currency' }).of(code) || code
-  } catch {
-    return code
-  }
-}
 
 const ordinal = (n) => {
   const rest = n % 100
@@ -127,6 +118,7 @@ function Switch({ checked, onChange, label }) {
 }
 
 export default function SettingsPage() {
+  const supportedCurrencies = useSupportedCurrencies()
   const router = useRouter()
   const [currentCurrency, setCurrentCurrency] = useState('')
   const [selectedCurrency, setSelectedCurrency] = useState('')
@@ -279,7 +271,8 @@ export default function SettingsPage() {
     router.push('/login')
   }
 
-  const currencyCodes = currentCurrency && !COMMON_CURRENCIES.includes(currentCurrency) ? [currentCurrency, ...COMMON_CURRENCIES] : COMMON_CURRENCIES
+  // The same currencies as everywhere else in the app (the common ones while that list loads), plus the one already chosen.
+  const currencyCodes = sortCurrencies([...(supportedCurrencies.length > 0 ? supportedCurrencies : COMMON_CURRENCIES), ...(currentCurrency ? [currentCurrency] : [])])
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -302,7 +295,7 @@ export default function SettingsPage() {
             onSave={saveCurrency}
             saving={currencySaving}
             loading={currencyLoading}
-            options={currencyCodes.map((code) => [code, `${code} · ${currencyName(code)}`])}
+            options={currencyCodes.map((code) => [code, currencyLabel(code)])}
           />
         </Row>
         <Row

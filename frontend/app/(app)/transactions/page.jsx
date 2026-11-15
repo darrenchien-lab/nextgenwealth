@@ -472,6 +472,8 @@ export default function TransactionsPage() {
 
   const currencyTotals = summarizeByCurrency(transactions, accounts)
   const currencies = Object.keys(currencyTotals)
+  // Said under each total so it is clear what the figures add up.
+  const totalsHint = filters.accountId || filters.categoryId || filters.type ? 'Matching your filters' : 'All in this period'
 
   return (
     <div className="space-y-6">
@@ -497,21 +499,21 @@ export default function TransactionsPage() {
                 color="emerald"
                 label={currencies.length > 1 ? `Income (${currency})` : 'Income'}
                 value={formatCurrency(currencyTotals[currency].income, currency)}
-                hint={currencies.length === 1 ? 'in view' : undefined}
+                hint={currencies.length === 1 ? totalsHint : undefined}
               />
               <SummaryCard
                 icon={TrendingDown}
                 color="red"
                 label={currencies.length > 1 ? `Expense (${currency})` : 'Expense'}
                 value={formatCurrency(currencyTotals[currency].expense, currency)}
-                hint={currencies.length === 1 ? 'in view' : undefined}
+                hint={currencies.length === 1 ? totalsHint : undefined}
               />
               <SummaryCard
                 icon={Scale}
                 color="blue"
                 label={currencies.length > 1 ? `Net (${currency})` : 'Net'}
                 value={formatCurrency(currencyTotals[currency].income - currencyTotals[currency].expense, currency)}
-                hint={currencies.length === 1 ? 'in view' : undefined}
+                hint={currencies.length === 1 ? totalsHint : undefined}
               />
             </div>
           ))}

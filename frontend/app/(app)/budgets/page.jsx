@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency } from '@/lib/format'
+import { sortCurrencies } from '@/lib/currencies'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import PageSkeleton from '@/components/PageSkeleton'
@@ -233,7 +234,7 @@ export default function BudgetsPage() {
             onChange={(e) => setForm({ ...form, currency: e.target.value })}
             className="rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
           >
-            {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+            {sortCurrencies(currencies).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
 
           {showCategoryForm && (
@@ -316,7 +317,7 @@ export default function BudgetsPage() {
                   onChange={(e) => setEditForm({ ...editForm, currency: e.target.value })}
                   className="w-28 shrink-0 rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 px-3 py-2 text-sm"
                 >
-                  {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {sortCurrencies(currencies).map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
 

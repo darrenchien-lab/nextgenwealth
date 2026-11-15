@@ -18,8 +18,9 @@ const COLOR_STYLES = {
 // A tiny line for a card: just the shape of the values, green when it ends at
 // or above where it started and red when below. No axes or numbers.
 function Sparkline({ values, large = false, goodWhenUp = true }) {
-  const width = large ? 200 : 84
-  const height = large ? 40 : 32
+  // The small one sits in the bottom row of a card so the figure above it keeps the full width.
+  const width = large ? 200 : 64
+  const height = large ? 40 : 22
   const pad = 3
   const min = Math.min(...values)
   const max = Math.max(...values)
@@ -119,14 +120,14 @@ export default function SummaryCard({
             </span>
           </p>
         ) : (
-          <p title={value} className={`mt-1.5 truncate font-semibold text-gray-900 dark:text-gray-100 ${hero ? 'text-2xl tracking-tight' : 'text-lg'}`}>{typeof value === 'string' ? <AnimatedValue text={value} /> : value}</p>
+          <p title={value} className={`mt-1.5 truncate font-semibold text-gray-900 dark:text-gray-100 ${hero ? 'text-2xl tracking-tight' : (typeof value === 'string' && value.length > 18 ? 'text-base' : 'text-lg')}`}>{typeof value === 'string' ? <AnimatedValue text={value} /> : value}</p>
         ))}
         </div>
-        {sparkValues && <div className="mb-0.5 hidden sm:block"><Sparkline values={sparkValues} large={hero} goodWhenUp={sparkGoodWhenUp} /></div>}
+        {sparkValues && hero && <div className="mb-0.5 hidden sm:block"><Sparkline values={sparkValues} large goodWhenUp={sparkGoodWhenUp} /></div>}
       </div>
       {/* A percentage change gives no amount away, so it stays visible when
           the amount itself is masked. */}
-      {((hint && !hidden) || (change !== undefined && change !== null)) && (
+      {((hint && !hidden) || (change !== undefined && change !== null) || (sparkValues && !hero)) && (
         <div className="mt-auto flex items-center gap-1.5 pt-1">
           {hint && !hidden && <p className="truncate text-xs text-gray-400 dark:text-gray-500">{hint}</p>}
           {change !== undefined && change !== null && (
@@ -135,6 +136,7 @@ export default function SummaryCard({
               {change > 0 ? '+' : change < 0 ? '−' : ''}{Math.abs(change)}{changeUnit}
             </span>
           )}
+          {sparkValues && !hero && <div className="ml-auto hidden shrink-0 sm:block"><Sparkline values={sparkValues} goodWhenUp={sparkGoodWhenUp} /></div>}
         </div>
       )}
       {parts && parts.length > 0 && <Parts parts={parts} hidden={hidden} />}

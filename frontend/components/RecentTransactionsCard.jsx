@@ -20,12 +20,12 @@ function relativeDay(value) {
 
 // The latest transactions across everything, with a button to add one without
 // leaving the dashboard. Amounts are masked when the dashboard's are.
-export default function RecentTransactionsCard({ transactions, accounts, categories, onAdd, hideAmounts = false, cycleLabel = null, seeAllHref = '/transactions', className = '' }) {
+export default function RecentTransactionsCard({ transactions, accounts, categories, onAdd, hideAmounts = false, cycleLabel = null, seeAllHref = '/transactions', compact = false, className = '' }) {
   const accountById = new Map((accounts || []).map((a) => [a.id, a]))
   const categoryById = new Map((categories || []).map((c) => [c.id, c.name]))
 
   return (
-    <div className={`rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700 ${className}`}>
+    <div className={`flex flex-col rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700 ${className}`}>
       <CardHeader
         icon={ArrowLeftRight}
         color="blue"
@@ -41,13 +41,13 @@ export default function RecentTransactionsCard({ transactions, accounts, categor
         }
       />
       {!transactions || transactions.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-8 text-center">
+        <div className={`flex flex-col items-center justify-center gap-2 py-8 text-center ${compact ? 'flex-1' : ''}`}>
           <Receipt size={24} className="text-gray-300 dark:text-gray-600" />
           <p className="text-sm text-gray-400 dark:text-gray-500">{cycleLabel ? 'No transactions in this cycle.' : 'No transactions yet.'}</p>
           {!cycleLabel && <button onClick={onAdd} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">Add your first one</button>}
         </div>
       ) : (
-        <ul className="grid grid-cols-1 gap-x-10 lg:grid-cols-2">
+        <ul className={`grid grid-cols-1 content-start gap-x-10 ${compact ? 'flex-1' : 'lg:grid-cols-2'}`}>
           {transactions.map((t) => {
             const income = t.type === 'income'
             const account = accountById.get(t.account_id)
