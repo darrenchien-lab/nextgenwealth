@@ -44,6 +44,8 @@ app.use('/goals', require('./routes/savingsGoals'))
 app.use('/investments', require('./routes/investments'))
 app.use('/reports', require('./routes/reports'))
 app.use('/insights', require('./routes/insights'))
+app.use('/smart-entry', require('./routes/smartEntry'))
+app.use('/help', require('./routes/help'))
 
 app.use(notFoundHandler)
 app.use(errorHandler)

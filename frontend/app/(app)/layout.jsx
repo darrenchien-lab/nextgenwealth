@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getToken } from '@/lib/apiClient'
 import Sidebar from '@/components/Sidebar'
+import HelpAssistant from '@/components/HelpAssistant'
 
 export default function AppLayout({ children }) {
   const router = useRouter()
@@ -28,6 +29,7 @@ export default function AppLayout({ children }) {
       <main className="relative min-w-0 flex-1 p-8">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
+      <HelpAssistant />
     </div>
   )
 }
