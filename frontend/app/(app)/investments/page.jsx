@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts'
-import { Pencil, X, Plus, Minus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers, Zap, RefreshCw } from 'lucide-react'
+import { Share2, Pencil, X, Plus, Minus, TrendingUp, PieChart, Bitcoin, Package, Landmark, Coins, Building2, Wallet, ArrowUpRight, ArrowDownRight, History, ChevronDown, Layers, Zap, RefreshCw } from 'lucide-react'
 import { request } from '@/lib/apiClient'
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format'
 import { sortCurrencies } from '@/lib/currencies'
@@ -15,6 +15,7 @@ import BuyHoldingModal from '@/components/BuyHoldingModal'
 import MarketSearch from '@/components/MarketSearch'
 import AutoPriceReview from '@/components/AutoPriceReview'
 import PortfolioSummary from '@/components/PortfolioSummary'
+import ShareCardModal from '@/components/ShareCardModal'
 import { CHART_TOOLTIP_STYLE, AXIS_TICK, GRID_STROKE } from '@/lib/chartStyle'
 import PageSkeleton from '@/components/PageSkeleton'
 
@@ -223,6 +224,7 @@ export default function InvestmentsPage() {
 
   // Automatic prices.
   const [showAutoReview, setShowAutoReview] = useState(false)
+  const [showShare, setShowShare] = useState(false)
   const [bannerDismissed, setBannerDismissed] = useState(() => {
     try { return typeof window !== 'undefined' && window.localStorage.getItem(BANNER_DISMISSED_KEY) === '1' } catch { return false }
   })
@@ -599,13 +601,25 @@ export default function InvestmentsPage() {
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Investments</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">Track your holdings and portfolio performance.</p>
         </div>
-        <button
-          onClick={() => { setForm(emptyForm()); setFormError(''); setPaymentMissing(0); setFormListing(null); setAssetMode(null); setShowForm((v) => !v) }}
-          className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md"
-        >
-          {showForm ? 'Cancel' : <><Plus size={15} /> Add Holding</>}
-        </button>
+        <div className="flex items-center gap-2">
+          {portfolio && portfolio.holdings.length > 0 && (
+            <button
+              onClick={() => setShowShare(true)}
+              className="flex items-center gap-1.5 rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              <Share2 size={15} /> Share
+            </button>
+          )}
+          <button
+            onClick={() => { setForm(emptyForm()); setFormError(''); setPaymentMissing(0); setFormListing(null); setAssetMode(null); setShowForm((v) => !v) }}
+            className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:scale-105 hover:bg-emerald-700 hover:shadow-md"
+          >
+            {showForm ? 'Cancel' : <><Plus size={15} /> Add Holding</>}
+          </button>
+        </div>
       </div>
+
+      {showShare && portfolio && <ShareCardModal portfolio={portfolio} onClose={() => setShowShare(false)} />}
 
       {portfolio && !bannerDismissed && portfolio.holdings.some((h) => !h.price_source && MARKET_TYPES.includes(h.asset_type)) && (
         <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-blue-100 dark:bg-gray-800 dark:ring-blue-900/50 sm:flex-row sm:items-center">
