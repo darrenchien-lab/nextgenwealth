@@ -5,11 +5,18 @@ require('dotenv').config()
 
 const { errorHandler, notFoundHandler } = require('./middleware')
 const reportsService = require('./services/reports')
+const { corsOptions, limits, trustProxy } = require('./shared/security')
 
 const app = express()
 
-app.use(cors())
-app.use(express.json())
+// Behind a proxy (set TRUST_PROXY=1) the real visitor's address is read from it,
+// so the limits below count each person separately.
+app.set('trust proxy', trustProxy())
+app.disable('x-powered-by')
+// Only the app's own website may call the API from a browser (see shared/security.js).
+app.use(cors(corsOptions()))
+// A small body is plenty for this app; a huge one is only ever an attack.
+app.use(express.json({ limit: '100kb' }))
 
 // Net worth can change from many places (a transaction, a transfer, an
 // account balance adjustment, a bill payment, an investment edit — not just
@@ -33,6 +40,12 @@ app.use((req, res, next) => {
 
 app.get('/healthz', (_req, res) => res.status(200).json({ ok: true }))
 
+app.use('/auth/login', limits.auth())
+app.use('/auth/forgot-password', limits.auth())
+app.use('/auth/reset-password', limits.auth())
+app.use('/auth/verify-email', limits.auth())
+app.use('/auth/resend-verification', limits.auth())
+app.use('/auth/register', limits.register())
 app.use('/auth', require('./routes/auth'))
 app.use('/accounts', require('./routes/accounts'))
 app.use('/transfers', require('./routes/transfers'))

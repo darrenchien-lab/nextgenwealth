@@ -245,7 +245,7 @@ export default function SmartEntryModal({ onClose, onSaved }) {
               autoFocus
               className={`${INPUT} resize-none`}
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500">Your message and the names of your accounts and categories are shared with an AI service so it can understand them. Your balances are never shared.</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">Your message and the names of your accounts and categories are read by an AI model that runs on our own server so it can understand them. Your balances are never shared.</p>
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
             <div className="flex justify-end gap-2">
               <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>

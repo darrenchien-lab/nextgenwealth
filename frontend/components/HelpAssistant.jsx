@@ -148,7 +148,7 @@ export default function HelpAssistant() {
                 <Send size={16} />
               </button>
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-gray-500">Answers come from the app&apos;s guide and can be imperfect. Your questions are sent to an AI service, so please don&apos;t include personal details.</p>
+            <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-gray-500">Answers come from the app&apos;s guide and can be imperfect. Your questions are answered by an AI model that runs on our own server, but please don&apos;t include personal details.</p>
           </form>
         </div>
       )}

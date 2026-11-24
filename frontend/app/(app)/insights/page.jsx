@@ -137,7 +137,7 @@ export default function InsightsPage() {
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Personal summary</p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            Let AI write a short summary of your cycle at the top of this page. To do this, the findings above, including amounts and category names, are shared with an AI service. This is off unless you turn it on.
+            Let AI write a short summary of your cycle at the top of this page. To do this, the findings above, including amounts and category names, are read by the AI model that runs on our own server, and are not sent to any outside service. This is off unless you turn it on.
           </p>
         </div>
         <button

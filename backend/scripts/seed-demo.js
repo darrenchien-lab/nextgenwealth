@@ -12,6 +12,11 @@
 // investment logs stay consistent; only the past net-worth / portfolio
 // history (which the app normally builds up one day at a time) is written
 // directly to the snapshot tables.
+if (process.env.NODE_ENV === 'production') {
+  console.error('Refusing to fill a production database with demo data.')
+  process.exit(1)
+}
+
 const bcrypt = require('bcryptjs')
 const { pool, query } = require('../db/pool')
 const accountsService = require('../services/accounts')

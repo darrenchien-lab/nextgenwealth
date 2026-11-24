@@ -1,11 +1,12 @@
 'use strict'
 const crypto = require('crypto')
-const gemini = require('../shared/gemini')
+const ollama = require('../shared/ollama')
 
 // A short, friendly paragraph over the findings the built-in engine already
 // worked out. The model only rephrases those findings (it is told not to add
 // numbers), and it is only asked when the person has turned this on, since the
-// findings contain their amounts. Results are kept for a few hours so opening
+// findings contain their amounts (the model runs on this machine, so they
+// are not sent anywhere else). Results are kept for a few hours so opening
 // the page again doesn't ask again.
 
 const CACHE_MS = 6 * 60 * 60 * 1000
@@ -13,7 +14,7 @@ const DAILY_LIMIT = 10
 const cache = new Map() // userId -> { key, summary, at }
 const asked = new Map() // userId -> timestamps of recent model calls
 
-const SCHEMA = { type: 'OBJECT', properties: { summary: { type: 'STRING' } }, required: ['summary'] }
+const SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] }
 
 const SYSTEM = [
   'You are a warm, plain-spoken money coach inside a personal finance app.',
@@ -22,7 +23,7 @@ const SYSTEM = [
   'If something needs attention, say what to look at first. Be encouraging about good news. Speak to the person as "you".'
 ].join(' ')
 
-const summarize = async (userId, items, { callModel = gemini.callGemini, now = Date.now() } = {}) => {
+const summarize = async (userId, items, { callModel = ollama.callModel, now = Date.now() } = {}) => {
   const findings = items.filter((i) => i.title)
   if (findings.length === 0) return null
 

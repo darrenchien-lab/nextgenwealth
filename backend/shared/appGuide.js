@@ -63,7 +63,7 @@ REPORTS (menu: Reports)
 - "Export PDF" saves a report of this cycle or the last cycle.
 
 INSIGHTS (menu: Insights)
-- Plain-language findings about the current cycle, grouped as needs attention, good to know and going well: spending pace, categories running high, unusual big purchases, repeating charges, budgets, bills, goals and savings rate. Each links to the page where it can be acted on. A "Personal summary" switch lets AI write a short summary; it is off by default because it shares the findings (with amounts) with an AI service.
+- Plain-language findings about the current cycle, grouped as needs attention, good to know and going well: spending pace, categories running high, unusual big purchases, repeating charges, budgets, bills, goals and savings rate. Each links to the page where it can be acted on. A "Personal summary" switch lets AI write a short summary; it is off by default because the AI reads the findings (with amounts); the AI model runs on the app's own server.
 
 SETTINGS (menu: Settings)
 - Preferences: Display currency (the currency totals are shown in) and "Budget cycle starts on".

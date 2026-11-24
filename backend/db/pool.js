@@ -11,6 +11,9 @@ require('dotenv').config()
 // sidesteps the conversion entirely. OID 1082 = date.
 types.setTypeParser(1082, (value) => value)
 
+// Refuse to connect to the wrong kind of database (see dbGuard.js).
+require('./dbGuard').assertDatabaseTarget()
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
 const query = (sql, params) => pool.query(sql, params)

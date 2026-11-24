@@ -1,6 +1,6 @@
 'use strict'
 const { AppError, badRequest } = require('../shared/utils')
-const gemini = require('../shared/gemini')
+const ollama = require('../shared/ollama')
 const { PAGES, GUIDE } = require('../shared/appGuide')
 
 // The "Help" chat: answers questions about how to use the app, from the
@@ -13,8 +13,6 @@ const MAX_HISTORY_TEXT = 1500
 const PER_MINUTE = 8
 const PER_DAY = 100
 const usage = new Map()
-// A chat should answer quickly, so the lighter model goes first.
-const FAST_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-flash-latest']
 
 const checkRateLimit = (userId, now = Date.now()) => {
   const recent = (usage.get(userId) || []).filter((t) => now - t < 24 * 60 * 60 * 1000)
@@ -26,10 +24,10 @@ const checkRateLimit = (userId, now = Date.now()) => {
 }
 
 const SCHEMA = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
-    answer: { type: 'STRING' },
-    links: { type: 'ARRAY', items: { type: 'STRING', enum: Object.keys(PAGES) } }
+    answer: { type: 'string' },
+    links: { type: 'array', items: { type: 'string', enum: Object.keys(PAGES) } }
   },
   required: ['answer']
 }
@@ -58,14 +56,14 @@ const cleanHistory = (history) => {
   return turns
 }
 
-const ask = async (userId, question, history, { callModel = gemini.callGemini } = {}) => {
+const ask = async (userId, question, history, { callModel = ollama.callModel } = {}) => {
   if (typeof question !== 'string' || question.trim() === '') throw badRequest('Type your question first.')
   if (question.length > MAX_QUESTION) throw badRequest(`Please keep your question under ${MAX_QUESTION} characters.`)
 
   checkRateLimit(userId)
   let result
   try {
-    result = await callModel({ system: SYSTEM, text: question.trim(), schema: SCHEMA, temperature: 0.2, history: cleanHistory(history), models: FAST_MODELS })
+    result = await callModel({ system: SYSTEM, text: question.trim(), schema: SCHEMA, temperature: 0.2, history: cleanHistory(history) })
   } catch (err) {
     // A call that failed on our side doesn't use up one of the person's tries.
     usage.set(userId, (usage.get(userId) || []).slice(0, -1))

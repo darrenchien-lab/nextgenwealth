@@ -5,7 +5,7 @@ const { AppError, badRequest } = require('../shared/utils')
 const { isValidCurrencyCode } = require('../shared/currencyCodes')
 const accountsService = require('./accounts')
 const categoriesService = require('./categories')
-const gemini = require('../shared/gemini')
+const ollama = require('../shared/ollama')
 
 const SQL = { listOpenHoldings: loadSql('smartEntry/listOpenHoldings') }
 
@@ -15,7 +15,8 @@ const SQL = { listOpenHoldings: loadSql('smartEntry/listOpenHoldings') }
 // through the same endpoints as the normal forms, so every existing rule applies.
 //
 // Only names go to the model (accounts, categories, holdings) and never
-// balances or amounts from the user's data.
+// balances or amounts from the user's data. The model runs on this machine
+// (Ollama), so none of it is sent to an outside service.
 
 const MAX_TEXT = 1000
 const ASSET_TYPES = ['stock', 'mutual_fund', 'crypto', 'etf', 'bond', 'gold', 'property', 'other']
@@ -36,30 +37,34 @@ const checkRateLimit = (userId, now = Date.now()) => {
 }
 
 // --- The model call ----------------------------------------------------------
+// A standard JSON Schema; Ollama forces the model's answer to fit it.
+const nullable = (type, extra = {}) => ({ type: [type, 'null'], ...extra })
 const RESPONSE_SCHEMA = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     actions: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          kind: { type: 'STRING', enum: ['transaction', 'transfer', 'buy', 'sell'] },
-          date: { type: 'STRING', nullable: true },
-          amount: { type: 'NUMBER', nullable: true },
-          txType: { type: 'STRING', enum: ['income', 'expense'], nullable: true },
-          account: { type: 'STRING', nullable: true },
-          toAccount: { type: 'STRING', nullable: true },
-          category: { type: 'STRING', nullable: true },
-          notes: { type: 'STRING', nullable: true },
-          assetName: { type: 'STRING', nullable: true },
-          assetType: { type: 'STRING', enum: ASSET_TYPES, nullable: true },
-          quantity: { type: 'NUMBER', nullable: true },
-          quantityUnit: { type: 'STRING', enum: ['units', 'lot'], nullable: true },
-          price: { type: 'NUMBER', nullable: true },
-          currency: { type: 'STRING', nullable: true }
+          kind: { type: 'string', enum: ['transaction', 'transfer', 'buy', 'sell'] },
+          date: nullable('string'),
+          amount: nullable('number'),
+          txType: nullable('string', { enum: ['income', 'expense', null] }),
+          account: nullable('string'),
+          toAccount: nullable('string'),
+          category: nullable('string'),
+          notes: nullable('string'),
+          assetName: nullable('string'),
+          assetType: nullable('string', { enum: [...ASSET_TYPES, null] }),
+          quantity: nullable('number'),
+          quantityUnit: nullable('string', { enum: ['units', 'lot', null] }),
+          price: nullable('number'),
+          currency: nullable('string')
         },
-        required: ['kind']
+        // Every field is required (and may be null) so the model has to decide on each one
+        // instead of leaving out the amount.
+        required: ['kind', 'date', 'amount', 'txType', 'account', 'toAccount', 'category', 'notes', 'assetName', 'assetType', 'quantity', 'quantityUnit', 'price', 'currency']
       }
     }
   },
@@ -81,7 +86,7 @@ const buildInstruction = ({ today, context }) => [
   `Existing holdings: ${context.holdings.map((h) => h.asset_name).join('; ') || 'none'}`
 ].join('\n')
 
-const callGemini = ({ system, text }) => gemini.callGemini({ system, text, schema: RESPONSE_SCHEMA })
+const askModel = ({ system, text }) => ollama.callModel({ system, text, schema: RESPONSE_SCHEMA })
 
 // --- Turning the model's words into checked drafts ---------------------------
 const normalize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
@@ -160,7 +165,9 @@ const resolveDrafts = (raw, context, today) => {
       if (quantity && a.quantityUnit === 'lot') quantity = quantity * LOT_SIZE
       let price = positive(a.price)
       let total = positive(a.amount)
-      if (quantity && price && !total) total = round2(quantity * price)
+      // A small local model is unreliable at arithmetic (and never sees the lot conversion),
+      // so when quantity and price are both known the total is worked out here.
+      if (quantity && price) total = round2(quantity * price)
       if (quantity && total && !price) price = total / quantity
       if (!a.assetName && !holding) issues.push("We couldn't tell which asset this is.")
       if (!quantity) issues.push("We couldn't find how many.")
@@ -189,8 +196,8 @@ const loadContext = async (userId) => {
   return { accounts, categories, holdings, displayCurrency }
 }
 
-// callModel can be swapped out (tests, or another provider later).
-const parse = async (userId, text, { callModel = callGemini, now = new Date() } = {}) => {
+// callModel can be swapped out (tests).
+const parse = async (userId, text, { callModel = askModel, now = new Date() } = {}) => {
   if (typeof text !== 'string' || text.trim() === '') throw badRequest('Tell us what happened first.')
   if (text.length > MAX_TEXT) throw badRequest(`That's a bit long. Please keep it under ${MAX_TEXT} characters.`)
 
@@ -217,4 +224,4 @@ const parse = async (userId, text, { callModel = callGemini, now = new Date() } 
   }
 }
 
-module.exports = { parse, resolveDrafts, checkRateLimit, callGemini, buildInstruction, MAX_TEXT }
+module.exports = { parse, resolveDrafts, checkRateLimit, askModel, buildInstruction, MAX_TEXT }

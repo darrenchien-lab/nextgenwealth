@@ -103,14 +103,15 @@ test('smart entry: the rate limit stops a flood of requests', () => {
   assert.doesNotThrow(() => smartEntry.checkRateLimit(987654321, start + 61000))
 })
 
-test('smart entry: the endpoint needs a login, and says so plainly when the AI is not set up', async () => {
+test('smart entry: the endpoint needs a login, and says so plainly when the AI is not reachable', async () => {
   const { as } = await createTestUser()
-  const saved = process.env.GEMINI_API_KEY
-  delete process.env.GEMINI_API_KEY
+  const saved = process.env.OLLAMA_URL
+  process.env.OLLAMA_URL = 'http://127.0.0.1:1' // nothing listens here
   try {
     const res = await as.post('/smart-entry/parse').send({ text: 'beli kopi 25rb' })
     assert.equal(res.status, 503)
   } finally {
-    if (saved !== undefined) process.env.GEMINI_API_KEY = saved
+    if (saved === undefined) delete process.env.OLLAMA_URL
+    else process.env.OLLAMA_URL = saved
   }
 })

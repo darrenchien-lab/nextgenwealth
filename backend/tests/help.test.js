@@ -49,15 +49,16 @@ test('help: the guide covers every page the assistant may link to', () => {
   for (const label of Object.values(PAGES)) assert.ok(GUIDE.includes(label), `${label} is missing from the guide`)
 })
 
-test('help: the endpoint needs a login and says so plainly when the AI is not set up', async () => {
+test('help: the endpoint needs a login and says so plainly when the AI is not reachable', async () => {
   const { as } = await createTestUser()
-  const saved = process.env.GEMINI_API_KEY
-  delete process.env.GEMINI_API_KEY
+  const saved = process.env.OLLAMA_URL
+  process.env.OLLAMA_URL = 'http://127.0.0.1:1' // nothing listens here
   try {
     const res = await as.post('/help/ask').send({ question: 'How do I add a bill?' })
     assert.equal(res.status, 503)
     assert.equal((await as.post('/help/ask').send({})).status, 400)
   } finally {
-    if (saved !== undefined) process.env.GEMINI_API_KEY = saved
+    if (saved === undefined) delete process.env.OLLAMA_URL
+    else process.env.OLLAMA_URL = saved
   }
 })
