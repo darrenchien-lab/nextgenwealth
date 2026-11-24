@@ -145,7 +145,7 @@ export default function SpendingPaceCard({ current, previous, budgeted, budgets,
             </div>
             <div className="min-h-[150px] flex-1 lg:min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+                <ComposedChart data={rows} margin={{ top: 6, right: 22, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="pace-fill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={lineColor} stopOpacity={0.18} />

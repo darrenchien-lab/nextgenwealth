@@ -23,7 +23,9 @@ const countLabel = (items) => {
   ].filter(Boolean).join(' · ')
 }
 
-const formatRate = (rate) => formatNumber(Number(rate.toPrecision(rate < 1 ? 3 : 6)))
+// Significant digits, not decimal places, so a tiny rate (1 IDR = 0,0000553 USD)
+// is not rounded away to 0 and two close rates (0,03051 and 0,03038) still differ.
+const formatRate = (rate) => new Intl.NumberFormat('id-ID', { maximumSignificantDigits: rate < 1 ? 4 : 6 }).format(rate)
 
 // How much of what you own sits in each currency, and how much exchange-rate
 // moves alone have changed its worth since a budget cycle began.
@@ -75,7 +77,8 @@ export default function CurrencyExposureCard({ wide = false }) {
   return (
     <div className={`flex flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-100 dark:bg-gray-800 dark:ring-gray-700 ${wide ? 'lg:col-span-2' : 'lg:h-[460px]'}`}>
       <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Currency Exposure</h2>
-      <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">How your money is split across currencies, valued in {currency}</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">How your money is split across currencies, valued in {currency}</p>
+      <p className="mb-4 mt-0.5 text-xs text-gray-400 dark:text-gray-500">Each box shows what share of everything you own (accounts and investments) is held in that currency.</p>
 
       <ScrollFadeBox className="pr-1">
       <div className="flex h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
@@ -112,6 +115,10 @@ export default function CurrencyExposureCard({ wide = false }) {
             <div>
               <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Exchange-rate effect</p>
               <p className="text-xs text-gray-400 dark:text-gray-500">How much your foreign-currency money changed in {currency} only because rates moved</p>
+              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">Green</span> means that currency got stronger against {currency},{' '}
+                <span className="font-medium text-red-600 dark:text-red-400">red</span> means weaker. This is not investment profit.
+              </p>
             </div>
             {data.sinceOptions.length > 0 && (
               <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">

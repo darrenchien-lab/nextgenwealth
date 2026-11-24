@@ -8,7 +8,8 @@ import { request } from '@/lib/apiClient'
 import { formatCurrency, formatCompact, formatPercent } from '@/lib/format'
 import SummaryCard from '@/components/SummaryCard'
 import CardHeader from '@/components/CardHeader'
-import ScrollFadeList from '@/components/ScrollFadeList'
+import BreakdownList from '@/components/BreakdownList'
+import ExpenseHighlights from '@/components/ExpenseHighlights'
 import ScrollFadeBox from '@/components/ScrollFadeBox'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SpendingPaceCard from '@/components/SpendingPaceCard'
@@ -42,12 +43,12 @@ export default function DashboardPage() {
   const [recentPeriod, setRecentPeriod] = useState(null)
   // The slice (by row index) pointed at, in a donut or in the list beside it.
   const [allocationActive, setAllocationActive] = useState(null)
-  const [expenseActive, setExpenseActive] = useState(null)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [showSmartEntry, setShowSmartEntry] = useState(false)
   const [attention, setAttention] = useState([])
   const [reloadKey, setReloadKey] = useState(0)
   const [breakdown, setBreakdown] = useState(null)
+  const [expenseActive, setExpenseActive] = useState(null)
   const chartTheme = useChartTheme()
   const [upcomingBills, setUpcomingBills] = useState(null)
   const [billsTotal, setBillsTotal] = useState(null)
@@ -189,6 +190,13 @@ export default function DashboardPage() {
     ? withDistinctColors([...breakdown.breakdown].sort((a, b) => b.amount - a.amount), { nameKey: 'categoryName', theme: chartTheme })
     : []
 
+  // Plain facts for the Expense Breakdown card: spending per day so far, and against the same point of the cycle before.
+  const elapsedDays = cycleTrend ? cycleTrend.days.length : 0
+  const spentSoFar = breakdown ? breakdown.total : 0
+  const dailyAverage = elapsedDays > 0 && spentSoFar > 0 ? spentSoFar / elapsedDays : null
+  const spentThen = previousTrend && elapsedDays > 0 ? previousTrend.days[Math.min(elapsedDays, previousTrend.days.length) - 1]?.expense : null
+  const changeVsLast = spentThen > 0 ? Math.round(((spentSoFar - spentThen) / spentThen) * 100) : null
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -291,20 +299,21 @@ export default function DashboardPage() {
               : 'Now'}
           />
           {allocation && allocation.allocation.length > 0 ? (
-            <div className="flex flex-col items-center gap-3 lg:flex-1 lg:justify-center xl:flex-row xl:gap-5">
-              <DonutChart data={allocationSlices} nameKey="type" unit="types" activeIndex={allocationActive} onActiveChange={setAllocationActive} className="h-24 w-24 xl:h-32 xl:w-32" />
+            <div className="flex flex-col items-center gap-3 lg:flex-1 lg:justify-center xl:flex-row xl:gap-6">
+              <DonutChart data={allocationSlices} nameKey="type" unit="types" activeIndex={allocationActive} onActiveChange={setAllocationActive} className="h-28 w-28 xl:h-36 xl:w-36" />
               <div className="w-full min-w-0 xl:flex-1">
-                <ScrollFadeList className="h-24 w-full min-w-0 space-y-0.5 pr-1 xl:h-auto xl:max-h-44">
-                  {allocationSlices.map((entry, i) => (
-                    <li key={entry.type} title={formatCurrency(entry.amount, allocation.displayCurrency)} onMouseEnter={() => setAllocationActive(i)} onMouseLeave={() => setAllocationActive(null)} className={`flex items-center justify-between gap-2 rounded px-1 py-0.5 text-xs transition-colors duration-100 xl:text-[13px] ${allocationActive === i ? 'bg-gray-100 dark:bg-gray-700/60' : ''}`}>
-                      <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
-                        <span className="truncate">{ACCOUNT_TYPE_LABELS[entry.type] || entry.type}</span>
-                      </span>
-                      <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
-                    </li>
-                  ))}
-                </ScrollFadeList>
+                <BreakdownList
+                  className="h-24 w-full min-w-0 xl:h-auto xl:max-h-44"
+                  activeIndex={allocationActive}
+                  onActiveChange={setAllocationActive}
+                  rows={allocationSlices.map((entry) => ({
+                    key: entry.type,
+                    label: ACCOUNT_TYPE_LABELS[entry.type] || entry.type,
+                    color: entry.color,
+                    percentage: entry.percentage,
+                    title: formatCurrency(entry.amount, allocation.displayCurrency)
+                  }))}
+                />
               </div>
             </div>
           ) : (
@@ -350,7 +359,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <RecentTransactionsCard compact className="lg:col-span-2 lg:row-span-2" transactions={recent} accounts={accounts} categories={categories} hideAmounts={hideAmounts} cycleLabel={recentPeriod ? periodLabel : null} seeAllHref={recentPeriod ? `/transactions?period=${recentPeriod}` : '/transactions'} onAdd={() => setShowQuickAdd(true)} />
 
-        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2 lg:h-[210px]">
+        <div className="rounded-2xl bg-white dark:bg-gray-800 p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700 lg:col-span-2 lg:h-[230px]">
           <CardHeader
             icon={ShoppingBag}
             color="red"
@@ -360,17 +369,26 @@ export default function DashboardPage() {
           {expenseSlices.length > 0 ? (
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-6">
               <DonutChart data={expenseSlices} nameKey="categoryName" unit="categories" activeIndex={expenseActive} onActiveChange={setExpenseActive} className="h-28 w-28" />
-              <ScrollFadeList className="h-28 w-full min-w-0 space-y-0.5 pr-1">
-                {expenseSlices.map((entry, i) => (
-                  <li key={entry.categoryName} title={formatCurrency(entry.amount, breakdown.displayCurrency)} onMouseEnter={() => setExpenseActive(i)} onMouseLeave={() => setExpenseActive(null)} className={`flex items-center justify-between gap-2 rounded px-1 py-0.5 text-xs transition-colors duration-100 ${expenseActive === i ? 'bg-gray-100 dark:bg-gray-700/60' : ''}`}>
-                    <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-400">
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
-                      <span className="truncate">{entry.categoryName}</span>
-                    </span>
-                    <span className="shrink-0 font-medium text-gray-900 dark:text-gray-100">{entry.percentage}%</span>
-                  </li>
-                ))}
-              </ScrollFadeList>
+              <BreakdownList
+                className="h-28 w-full min-w-0 sm:max-w-[14rem]"
+                activeIndex={expenseActive}
+                onActiveChange={setExpenseActive}
+                rows={expenseSlices.map((entry) => ({
+                  key: entry.categoryName,
+                  label: entry.categoryName,
+                  color: entry.color,
+                  percentage: entry.percentage,
+                  title: formatCurrency(entry.amount, breakdown.displayCurrency)
+                }))}
+              />
+              <ExpenseHighlights
+                className="hidden w-44 shrink-0 self-center border-l border-gray-100 pl-6 dark:border-gray-700 xl:block"
+                top={expenseSlices[0]}
+                dailyAverage={dailyAverage}
+                changeVsLast={changeVsLast}
+                currency={breakdown.displayCurrency}
+                hideAmounts={hideAmounts}
+              />
             </div>
           ) : (
             <EmptyChartState label="No spending this cycle yet" compact />
